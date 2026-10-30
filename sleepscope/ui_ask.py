@@ -103,7 +103,7 @@ class AskView(QtWidgets.QWidget):
         top = QtWidgets.QHBoxLayout(); lay.addLayout(top)
         top.addWidget(QtWidgets.QLabel('API key'))
         self.key = QtWidgets.QLineEdit(SETTINGS.value('api_key', '')); self.key.setEchoMode(QtWidgets.QLineEdit.Password); self.key.setPlaceholderText('sk-ant-...')
-        self.key.editingFinished.connect(lambda: SETTINGS.setValue('api_key', self.key.text().strip())); top.addWidget(self.key, 2)
+        self.key.editingFinished.connect(self._key_changed); top.addWidget(self.key, 2)
         top.addWidget(QtWidgets.QLabel('Model')); self.model = QtWidgets.QLineEdit(SETTINGS.value('model', DEFAULT_MODEL)); self.model.setFixedWidth(180)
         self.model.editingFinished.connect(lambda: SETTINGS.setValue('model', self.model.text().strip())); top.addWidget(self.model)
         top.addWidget(QtWidgets.QLabel('Range')); self.d0 = QtWidgets.QDateEdit(calendarPopup=True); self.d0.setDisplayFormat('MMM d, yyyy'); top.addWidget(self.d0)
@@ -267,6 +267,9 @@ class AskView(QtWidgets.QWidget):
         for m in pairs: self._append('You' if m['role'] == 'user' else 'Claude', m['content'])
         self.status.setText(f'Loaded {len(pairs) // 2} earlier question(s). Your next question continues this conversation with the current data range attached.')
 
+    key_saved = QtCore.Signal()
+    def _key_changed(self):
+        SETTINGS.setValue('api_key', self.key.text().strip()); self.key_saved.emit()
     def _tick(self):
         if self._t0: self.status.setText(f'Waiting for Claude... {int((dt.datetime.now() - self._t0).total_seconds())} s  (a long answer can take 30 to 60 s)')
     def _start_worker(self, messages, msg):

@@ -54,6 +54,7 @@ HELP = """
 <li>In SleepScope, open the <b>Ask Claude</b> tab and paste the key into the <b>API key</b> box (top left). It is saved on this PC only.</li>
 <li>Click <b>Test connection</b>. You should see "Connection OK" and a list of models. If you see "invalid x-api-key" the paste was incomplete; if "credit balance", go back to Billing.</li>
 <li>Optional: fill in <b>About me</b> (third row) with a line about yourself, for example age, when you were diagnosed, your diagnostic AHI, and how you like answers. It is sent with each question so answers fit you.</li>
+<li>As soon as the key is saved, the <b>Synopsis</b> tab fills its right hand pane with Claude's own reading of your data, and does so again whenever new data loads (switch off with the "Automatic when data loads" box if you prefer to press <b>Ask Claude now</b> yourself). The same data is never sent twice.</li>
 <li>Type a question and press <b>Send</b> (or Ctrl+Enter). Answers appear in the window and are saved to Documents\\SleepScope. They are shown again next time you open the app, and the <b>Earlier</b> list brings back any saved conversation.</li>
 </ol>
 

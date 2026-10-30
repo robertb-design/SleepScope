@@ -5,9 +5,9 @@ from PySide6 import QtCore, QtWidgets, QtGui
 
 STEPS = [
     ('1', '#2a78d6', 'Get your data in', 'Put the machine\'s SD card in the PC (built-in slot or a USB card reader) and open it. No card yet? Load the sample data to look around.', 'Open SD card…', 'open'),
-    ('2', '#1baf7a', 'Read the Synopsis', 'A plain English report for any date range: hours, event control, leak, pressure, oxygen, and what it means for you.', 'Go to Synopsis', 'synopsis'),
+    ('2', '#1baf7a', 'Read the Synopsis', 'A plain English report for any date range, and, once Claude is connected, Claude\'s own reading of the same data beside it.', 'Go to Synopsis', 'synopsis'),
     ('3', '#6250d6', 'See the picture', 'The 3D Landscape shows a week at a glance; the Night tab shows every breath. Drag to rotate, hover for values.', 'Go to 3D Landscape', 'landscape'),
-    ('4', '#eb6834', 'Connect Claude', 'Ask questions about your results in plain language. Needs an API key from console.anthropic.com (a few cents per question).', 'Set up Ask Claude', 'ask'),
+    ('4', '#eb6834', 'Connect Claude', 'Save an API key from console.anthropic.com and Claude writes a synopsis of your data by itself each time it loads, and answers questions (a few cents each).', 'Set up Ask Claude', 'ask'),
     ('5', '#e34948', 'Add an oximeter', 'A Wellue O2Ring or similar records SpO2 all night. Import its CSV and the oxygen side of the picture fills in.', 'Import oximeter CSV…', 'oximeter'),
     ('6', '#eda100', 'Add Apple Health', 'Export from the Health app on the iPhone and import here for sleep stages, heart rate and Watch SpO2 next to the CPAP data.', 'Import Apple Health…', 'apple'),
 ]

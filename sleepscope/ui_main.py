@@ -6,7 +6,8 @@ from PySide6 import QtCore, QtWidgets, QtGui
 from . import loader, scoring, synopsis, apple_health
 from .theme import C, EVENT_COLORS, style_plot
 from .ui_night import NightView
-from .ui_ask import AskView
+from .ui_ask import AskView, AskWorker, build_context, SYSTEM as ASK_SYSTEM
+import hashlib
 from .ui_landscape import LandscapeView
 from .ui_notes import NotesView
 from .ui_help import HelpView
@@ -178,7 +179,21 @@ class SynopsisView(QtWidgets.QWidget):
         gen = QtWidgets.QPushButton('Generate'); gen.setDefault(True); gen.clicked.connect(self.generate); bar.addWidget(gen)
         cp = QtWidgets.QPushButton('Copy'); cp.clicked.connect(self.copy); bar.addWidget(cp)
         sv = QtWidgets.QPushButton('Save HTML…'); sv.clicked.connect(self.save); bar.addWidget(sv)
-        self.text = QtWidgets.QTextBrowser(); self.text.setOpenExternalLinks(True); self.text.setStyleSheet('font-size:13px; padding:8px'); lay.addWidget(self.text)
+        split = QtWidgets.QSplitter(); lay.addWidget(split, 1)
+        left = QtWidgets.QWidget(); ll = QtWidgets.QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
+        lt = QtWidgets.QLabel('Rule based synopsis (computed on this PC)'); lt.setStyleSheet('font-weight:700; color:#1d4f91; padding:4px'); ll.addWidget(lt)
+        self.text = QtWidgets.QTextBrowser(); self.text.setOpenExternalLinks(True); self.text.setStyleSheet('font-size:13px; padding:8px'); ll.addWidget(self.text)
+        right = QtWidgets.QWidget(); rl = QtWidgets.QVBoxLayout(right); rl.setContentsMargins(0, 0, 0, 0)
+        rbar = QtWidgets.QHBoxLayout(); rl.addLayout(rbar)
+        rt = QtWidgets.QLabel("Claude's reading of the same data"); rt.setStyleSheet('font-weight:700; color:#eb6834; padding:4px'); rbar.addWidget(rt); rbar.addStretch()
+        self.auto = QtWidgets.QCheckBox('Automatic when data loads'); self.auto.setChecked(SETTINGS.value('auto_claude', 'true') == 'true')
+        self.auto.toggled.connect(lambda v: SETTINGS.setValue('auto_claude', 'true' if v else 'false')); rbar.addWidget(self.auto)
+        self.claude_btn = QtWidgets.QPushButton('Ask Claude now'); self.claude_btn.clicked.connect(lambda: self.ask_claude(force=True)); rbar.addWidget(self.claude_btn)
+        self.claude_text = QtWidgets.QTextBrowser(); self.claude_text.setOpenExternalLinks(True); self.claude_text.setStyleSheet('font-size:13px; padding:8px'); rl.addWidget(self.claude_text)
+        self.claude_status = QtWidgets.QLabel(''); self.claude_status.setStyleSheet('color:#52514e; padding:2px 4px'); rl.addWidget(self.claude_status)
+        split.addWidget(left); split.addWidget(right); split.setSizes([600, 600])
+        self.worker = None; self._claude_key = None
+        self.claude_text.setHtml('<p style="color:#52514e">Claude reads the statistics, events and the rule based synopsis for the selected range and writes its own account: what the data shows, what it means for you, and what to ask the prescriber. It runs by itself when data loads if an API key is saved on the Ask Claude tab (a few cents per run; the same data is not sent twice).</p>')
         self.d0.dateChanged.connect(self.generate); self.d1.dateChanged.connect(self.generate); self.diag.valueChanged.connect(self.generate)
     def set_nights(self, nights):
         self.nights = nights
@@ -195,10 +210,52 @@ class SynopsisView(QtWidgets.QWidget):
         a = self.d0.date().toPython(); b = self.d1.date().toPython()
         if a > b: a, b = b, a
         self.html = synopsis.generate(self.nights, a, b, self.diag.value() or None); self.text.setHtml(self.html)
-    def copy(self): QtWidgets.QApplication.clipboard().setText(self.text.toPlainText())
+        if self.auto.isChecked(): self.ask_claude(force=False)
+    # ---- Claude narrative
+    def ask_claude(self, force=False):
+        if not self.nights: return
+        key = SETTINGS.value('api_key', '').strip()
+        if not key:
+            self.claude_status.setText('No API key saved. Add one on the Ask Claude tab and this fills in automatically.'); return
+        if self.worker and self.worker.isRunning(): return
+        a = self.d0.date().toPython(); b = self.d1.date().toPython()
+        if a > b: a, b = b, a
+        sel = [n for n in self.nights if a <= n.date <= b]
+        if not sel: return
+        sig = hashlib.md5(('|'.join(f"{n.date}:{n.hours:.3f}:{n.stats.get('AHI', 0):.3f}:{n.stats.get('spo2_mean', 0)}" for n in sel) + f"|{self.diag.value()}|{SETTINGS.value('about_me', '')}").encode()).hexdigest()
+        cache = SETTINGS.value('claude_synopsis_cache', {}) or {}
+        if not force and sig in cache:
+            self.claude_text.setMarkdown(cache[sig]); self.claude_status.setText(f'Shown from cache ({a} to {b}). Press Ask Claude now to refresh.'); return
+        if not force and len(cache) >= 1 and SETTINGS.value('auto_claude', 'true') != 'true': return
+        ctx = build_context(self.nights, a, b, self.diag.value() or None)
+        about = SETTINGS.value('about_me', '').strip()
+        prompt = (ctx + "\n\nTASK: Write a synopsis of this CPAP data for the user, in plain language, as a short report with these headings: "
+                  "What the data shows; What it means for you; What is going well; What to watch; Questions for the prescriber. "
+                  "Use the numbers in the context. Where the rule based synopsis and your own reading differ, say so. Keep it under 500 words. No dashes in prose.")
+        self._claude_key = sig; self._range = (a, b)
+        self.claude_status.setText(f'Asking {SETTINGS.value("model", "claude-sonnet-5-5")}... (a long answer can take 30 to 60 s)'); self.claude_btn.setEnabled(False)
+        sysmsg = ASK_SYSTEM + (f'\nAbout the user, in their words: {about}\n' if about else '')
+        self.worker = AskWorker(key, SETTINGS.value('model', 'claude-sonnet-5-5'), sysmsg, [{'role': 'user', 'content': prompt}])
+        self.worker.done.connect(self._claude_done); self.worker.failed.connect(self._claude_fail); self.worker.start()
+    def _claude_done(self, text):
+        self.claude_btn.setEnabled(True); self.claude_text.setMarkdown(text)
+        cache = SETTINGS.value('claude_synopsis_cache', {}) or {}
+        cache[self._claude_key] = text
+        if len(cache) > 30: cache = dict(list(cache.items())[-30:])
+        SETTINGS.setValue('claude_synopsis_cache', cache)
+        a, b = self._range; self.claude_status.setText(f'Claude synopsis for {a} to {b}, saved to your notes folder.')
+        try:
+            folder = SETTINGS.value('ask_folder', os.path.join(os.path.expanduser('~'), 'Documents', 'SleepScope'))
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, f'claude_synopsis_{dt.date.today():%Y-%m-%d}.md'), 'w', encoding='utf-8') as f:
+                f.write(f"# Claude synopsis, data {a} to {b}, written {dt.datetime.now():%B %d, %Y %H:%M}\n\n{text}\n")
+        except Exception: pass
+    def _claude_fail(self, msg):
+        self.claude_btn.setEnabled(True); self.claude_status.setText('Claude synopsis failed: ' + msg)
+    def copy(self): QtWidgets.QApplication.clipboard().setText(self.text.toPlainText() + '\n\n==== Claude\'s reading ====\n\n' + self.claude_text.toPlainText())
     def save(self):
         p, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save synopsis', 'sleepscope_synopsis.html', 'HTML (*.html)')
-        if p: open(p, 'w', encoding='utf-8').write('<html><body style="font-family:Segoe UI,Arial;max-width:800px;margin:auto">' + getattr(self, 'html', '') + '</body></html>')
+        if p: open(p, 'w', encoding='utf-8').write('<html><body style="font-family:Segoe UI,Arial;max-width:800px;margin:auto">' + getattr(self, 'html', '') + "<hr><h2>Claude's reading</h2>" + self.claude_text.toHtml() + '</body></html>')
 
 
 METHODS = """
@@ -270,7 +327,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ask = AskView(); self.tabs.addTab(self.ask, 'Ask Claude')
         self.notes = NotesView(); self.tabs.addTab(self.notes, 'Saved answers')
         self.notes.continue_requested.connect(self._continue_conversation)
-        self.ask.answer_saved.connect(self.notes.refresh)
+        self.ask.answer_saved.connect(self.notes.refresh); self.ask.key_saved.connect(lambda: (self._refresh_home(), self.synopsis.ask_claude(force=False)))
         self.night_view = NightView(); self.tabs.addTab(self.night_view, 'Night')
         ev_w = QtWidgets.QWidget(); evl = QtWidgets.QVBoxLayout(ev_w); evl.setContentsMargins(4, 4, 4, 4)
         self.ev_filter = QtWidgets.QComboBox(); self.ev_filter.addItems(['All', 'Machine only', 'App only', 'Apneas', 'Hypopneas', 'Flow limitation', 'Leak', 'Periodic'])
