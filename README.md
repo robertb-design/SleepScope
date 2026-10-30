@@ -13,7 +13,7 @@ signal, and shows the machine's scoring next to its own.
 Run `build_exe.bat` once (after install.bat). It packages Python, the libraries and the app into `dist\SleepScope\SleepScope.exe` and zips
 that folder as `SleepScope-Windows-x64.zip` (about 150 MB). Send the zip; recipients unzip it anywhere and double-click `SleepScope.exe`.
 Windows SmartScreen will warn the first time because the exe is not code-signed: click "More info", then "Run anyway".
-`.github/workflows/build.yml` builds the same zip automatically on GitHub if the folder is ever pushed to a repository and tagged `v1.0` etc.
+Ready-made downloads: https://github.com/robertb-design/sleepscope/releases (built automatically by GitHub on every update).
 
 ## Tabs
 - **How to use** a guide for new users: loading the card, what each tab is for, the numbers in plain words, oximeter, Apple Health, Ask Claude setup, updating, troubleshooting.

@@ -1,8 +1,10 @@
 name: Build Windows package
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   windows:
     runs-on: windows-latest
@@ -16,6 +18,13 @@ jobs:
       - run: Compress-Archive -Path dist/SleepScope/* -DestinationPath SleepScope-Windows-x64.zip
       - uses: actions/upload-artifact@v4
         with: { name: SleepScope-Windows-x64, path: SleepScope-Windows-x64.zip }
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with: { files: SleepScope-Windows-x64.zip }
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: SleepScope 1.0.${{ github.run_number }}
+          body: |
+            Windows package. Unzip anywhere and double-click SleepScope.exe. No Python needed.
+            Windows SmartScreen warns the first time because the file is not code-signed: choose "More info", then "Run anyway".
+          files: SleepScope-Windows-x64.zip
+          make_latest: true
