@@ -14,21 +14,15 @@ def paint_logo(p: QtGui.QPainter, rect: QtCore.QRectF, on_dark=False):
     grad = QtGui.QLinearGradient(r.topLeft(), r.bottomRight()); grad.setColorAt(0, QtGui.QColor('#153b6e')); grad.setColorAt(1, QtGui.QColor(BLUE))
     p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90 if on_dark else 0), max(1, s * 0.03))); p.setBrush(grad)
     p.drawRoundedRect(r, s * 0.22, s * 0.22)
-    # moon
-    p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor('#ffd166'))
-    cx, cy, rr = r.left() + s * 0.70, r.top() + s * 0.30, s * 0.13
-    p.drawEllipse(QtCore.QPointF(cx, cy), rr, rr)
-    p.setBrush(grad); p.drawEllipse(QtCore.QPointF(cx + rr * 0.55, cy - rr * 0.35), rr * 0.9, rr * 0.9)
-    # breathing wave
+    # the V with two wings: 1.5 cycles of a sine, amplitude shaped by |sin| so the centre dip is deep and the wings taper
     path = QtGui.QPainterPath()
-    n = 60; x0, x1 = r.left() + s * 0.14, r.right() - s * 0.14; ym = r.top() + s * 0.66; amp = s * 0.14
+    n = 80; x0, x1 = r.left() + s * 0.07, r.right() - s * 0.07; ym = r.top() + s * 0.50; amp = s * 0.27
     for i in range(n + 1):
         t = i / n; x = x0 + (x1 - x0) * t
-        env = 0.35 + 0.65 * math.sin(math.pi * t) ** 0.8
-        y = ym - amp * env * math.sin(t * math.pi * 4.0)
+        y = ym - amp * math.sin(t * math.pi * 3) * (0.3 + 0.7 * abs(math.sin(t * math.pi)))
         if i == 0: path.moveTo(x, y)
         else: path.lineTo(x, y)
-    p.setPen(QtGui.QPen(QtGui.QColor('white'), max(1.5, s * 0.07), QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)); p.setBrush(QtCore.Qt.NoBrush)
+    p.setPen(QtGui.QPen(QtGui.QColor('white'), max(1.5, s * 0.055), QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)); p.setBrush(QtCore.Qt.NoBrush)
     p.drawPath(path)
 
 
