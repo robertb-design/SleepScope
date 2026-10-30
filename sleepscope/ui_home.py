@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 from PySide6 import QtCore, QtWidgets, QtGui
+from .branding import logo_pixmap
 
 STEPS = [
     ('1', '#2a78d6', 'Get your data in', 'Put the machine\'s SD card in the PC (built-in slot or a USB card reader) and open it. No card yet? Load the sample data to look around.', 'Open SD card…', 'open'),
@@ -45,7 +46,9 @@ class HomeView(QtWidgets.QScrollArea):
         lay = QtWidgets.QVBoxLayout(w); lay.setContentsMargins(24, 20, 24, 24); lay.setSpacing(16)
         banner = QtWidgets.QFrame(); banner.setStyleSheet('QFrame { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1d4f91, stop:1 #2a78d6); border-radius: 12px; } QLabel { color: white; background: transparent; }')
         bl = QtWidgets.QVBoxLayout(banner); bl.setContentsMargins(24, 18, 24, 18)
-        h = QtWidgets.QLabel('SleepScope'); h.setStyleSheet('font-size:26px; font-weight:800'); bl.addWidget(h)
+        hrow = QtWidgets.QHBoxLayout(); bl.addLayout(hrow)
+        mark = QtWidgets.QLabel(); mark.setPixmap(logo_pixmap(48, on_dark=True)); hrow.addWidget(mark)
+        h = QtWidgets.QLabel('SleepScope'); h.setStyleSheet('font-size:26px; font-weight:800'); hrow.addWidget(h); hrow.addStretch()
         sub = QtWidgets.QLabel('See what your CPAP is doing every night: what the machine scored, what the airflow shows, where the mask leaked, and what it all means. Six steps, in order. Steps 1 and 2 are enough to start; the rest add more of the picture.')
         sub.setWordWrap(True); sub.setStyleSheet('font-size:13px'); bl.addWidget(sub)
         self.summary = QtWidgets.QLabel(''); self.summary.setStyleSheet('font-size:12px; color:#dbe7f7'); bl.addWidget(self.summary)

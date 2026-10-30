@@ -12,6 +12,7 @@ from .ui_landscape import LandscapeView
 from .ui_notes import NotesView
 from .ui_help import HelpView
 from .ui_home import HomeView
+from .branding import Page, LogoWidget, app_icon
 
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
 
@@ -304,6 +305,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__(); self.setWindowTitle('SleepScope'); self.resize(1500, 950)
         self.data = None; self.nights = []
         tb = self.addToolBar('Main'); tb.setMovable(False); tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        tb.addWidget(LogoWidget(30)); tb.addSeparator()
         tb.addAction('Open SD card…', self.open_card); tb.addAction('Reload', self.reload); tb.addAction('Load sample data', self.load_sample); tb.addAction('Close data', self.close_data)
         tb.addAction('Import oximeter CSV…', self.import_oximeter); tb.addAction('Import Apple Health export…', self.import_apple); tb.addSeparator()
         tb.addAction('Export statistics CSV', lambda: self.export_table(self.stats_table, 'sleepscope_nights.csv'))
@@ -320,25 +322,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tabs = QtWidgets.QTabWidget(); split.addWidget(self.tabs); split.setSizes([470, 1030])
         self.home = HomeView(); self.home.action.connect(self._home_action); self.tabs.addTab(self.home, 'Start here')
-        self.tabs.addTab(HelpView(), 'How to use')
-        self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(self.overview, 'Overview')
-        self.synopsis = SynopsisView(); self.tabs.addTab(self.synopsis, 'Synopsis')
-        self.landscape = LandscapeView(); self.tabs.addTab(self.landscape, '3D Landscape')
-        self.ask = AskView(); self.tabs.addTab(self.ask, 'Ask Claude')
-        self.notes = NotesView(); self.tabs.addTab(self.notes, 'Saved answers')
+        self.tabs.addTab(Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'), 'How to use')
+        self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(Page(self.overview, 'Overview', 'Trends across nights. Click a bar to open that night.', '#2a78d6'), 'Overview')
+        self.synopsis = SynopsisView(); self.tabs.addTab(Page(self.synopsis, 'Synopsis', 'Plain English report for any date range, with Claude\'s reading beside it.', '#1baf7a'), 'Synopsis')
+        self.landscape = LandscapeView(); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed; the key on the right explains the rest.', '#6250d6'), '3D Landscape')
+        self.ask = AskView(); self.tabs.addTab(Page(self.ask, 'Ask Claude', 'Questions about your results, answered from your numbers and saved for later.', '#eb6834'), 'Ask Claude')
+        self.notes = NotesView(); self.tabs.addTab(Page(self.notes, 'Saved answers', 'Everything Claude has written for you, searchable.', '#d95926'), 'Saved answers')
         self.notes.continue_requested.connect(self._continue_conversation)
         self.ask.answer_saved.connect(self.notes.refresh); self.ask.key_saved.connect(lambda: (self._refresh_home(), self.synopsis.ask_claude(force=False)))
-        self.night_view = NightView(); self.tabs.addTab(self.night_view, 'Night')
+        self.night_view = NightView(); self.tabs.addTab(Page(self.night_view, 'Night', 'One night, every breath. Step through events, zoom from 30 seconds to the whole night, hover for values.', '#2a78d6'), 'Night')
         ev_w = QtWidgets.QWidget(); evl = QtWidgets.QVBoxLayout(ev_w); evl.setContentsMargins(4, 4, 4, 4)
         self.ev_filter = QtWidgets.QComboBox(); self.ev_filter.addItems(['All', 'Machine only', 'App only', 'Apneas', 'Hypopneas', 'Flow limitation', 'Leak', 'Periodic'])
         self.ev_filter.currentIndexChanged.connect(self._fill_events); evl.addWidget(self.ev_filter)
         self.ev_table = Table(['Time', 'Type', 'Source', 'Dur s', 'Set P', 'Mask P', 'Leak', 'FlowLim', 'Detail']); self.ev_table.doubleClicked.connect(self._event_dbl)
-        evl.addWidget(self.ev_table); self.tabs.addTab(ev_w, 'Events')
-        self.breaths = BreathView(); self.tabs.addTab(self.breaths, 'Breaths')
-        self.stats_table = Table([h for _, h, _ in scoring.STAT_COLUMNS]); self.tabs.addTab(self.stats_table, 'Statistics')
+        evl.addWidget(self.ev_table); self.tabs.addTab(Page(ev_w, 'Events', 'Every event the machine scored and every one the app found. Double-click to see it.', '#e34948'), 'Events')
+        self.breaths = BreathView(); self.tabs.addTab(Page(self.breaths, 'Breaths', 'Breath by breath mechanics, and events against the pressure they happened at.', '#1baf7a'), 'Breaths')
+        self.stats_table = Table([h for _, h, _ in scoring.STAT_COLUMNS]); self.tabs.addTab(Page(self.stats_table, 'Statistics', 'Every number for every night. Export to CSV from the toolbar.', '#eda100'), 'Statistics')
         dev = QtWidgets.QWidget(); dl = QtWidgets.QVBoxLayout(dev); self.dev_text = QtWidgets.QLabel(''); self.dev_text.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        dl.addWidget(self.dev_text); self.str_table = Table(['Day']); dl.addWidget(self.str_table); self.tabs.addTab(dev, 'Device and settings')
-        meth = QtWidgets.QTextBrowser(); meth.setHtml(METHODS); self.tabs.addTab(meth, 'Methods')
+        dl.addWidget(self.dev_text); self.str_table = Table(['Day']); dl.addWidget(self.str_table); self.tabs.addTab(Page(dev, 'Device and settings', 'Machine identity and the machine\'s own daily summary when the card root is opened.', '#8a8985'), 'Device and settings')
+        meth = QtWidgets.QTextBrowser(); meth.setHtml(METHODS); self.tabs.addTab(Page(meth, 'Methods', 'How every number is computed and how far to trust it.', '#1d4f91'), 'Methods')
         self.tabs.currentChanged.connect(self._tab_changed)
         self._refresh_home()
         last = SETTINGS.value('root', '')
@@ -505,6 +507,7 @@ def main():
         import traceback; msg = ''.join(traceback.format_exception(t, v, tb)); print(msg, file=sys.stderr)
         QtWidgets.QMessageBox.critical(None, 'SleepScope error', msg)
     sys.excepthook = excepthook
-    w = MainWindow(); w.show()
+    app.setWindowIcon(app_icon())
+    w = MainWindow(); w.setWindowIcon(app_icon()); w.show()
     if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]): w.load(sys.argv[1])
     sys.exit(app.exec())

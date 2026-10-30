@@ -26,9 +26,9 @@ def apply(app):
         QToolBar QToolButton { color: white; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; padding: 5px 10px; font-weight: 600; }
         QToolBar QToolButton:hover { background: rgba(255,255,255,0.28); }
         QToolBar::separator { background: rgba(255,255,255,0.3); width: 1px; margin: 4px 6px; }
-        QTabWidget::pane { border: 1px solid #e6e5e2; border-radius: 8px; background: white; top: -1px; }
+        QTabWidget::pane { border: 1px solid #e6e5e2; border-radius: 8px; background: #f6f5f2; top: -1px; }
         QTabBar::tab { background: #e9e8e4; color: #3a3936; padding: 7px 14px; margin-right: 3px; border-top-left-radius: 8px; border-top-right-radius: 8px; }
-        QTabBar::tab:selected { background: white; color: #1d4f91; font-weight: 700; border: 1px solid #e6e5e2; border-bottom: 2px solid white; }
+        QTabBar::tab:selected { background: #f6f5f2; color: #1d4f91; font-weight: 700; border: 1px solid #e6e5e2; border-bottom: 2px solid #f6f5f2; }
         QTabBar::tab:hover:!selected { background: #f0efec; }
         QTableView { gridline-color: #e6e5e2; selection-background-color: #d6e6fa; selection-color: #0b0b0b; background: white; alternate-background-color: #fafaf8; border: none; }
         QHeaderView::section { background: #eef4fc; color: #1d4f91; padding: 4px 6px; border: 0; border-bottom: 1px solid #d6e6fa; font-weight: 700; }
