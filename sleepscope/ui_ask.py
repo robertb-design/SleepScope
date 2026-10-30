@@ -9,12 +9,13 @@ from __future__ import annotations
 import json, datetime as dt, urllib.request, urllib.error, html, re, os, glob
 import numpy as np
 from PySide6 import QtCore, QtWidgets, QtGui
-from . import scoring, synopsis
+from . import scoring, synopsis, equipment
 
 API_URL = 'https://api.anthropic.com/v1/messages'
 DEFAULT_MODEL = 'claude-sonnet-5-5'
 C_ERR = '#e34948'
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
+IDENT = {}          # machine identification from the loaded card, set by the main window
 
 SYSTEM = """You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data.
 Give plain, direct, well-reasoned answers with no filler. If the user has written an About me note, use it to pitch the answer.
@@ -22,6 +23,9 @@ You have the app's computed results for the selected date range in the CONTEXT b
 When a question needs something not in the context, say so and name what would answer it (an oximeter, STR.edf, a longer range, the prescriber).
 Be clear about what is established physiology versus your inference. Pressure settings are prescribed: discuss trade-offs and what to raise
 with the prescriber rather than instructing changes. Never use dashes in prose; use commas or restructure. Keep answers tight.
+When equipment comes up, tie any suggestion to a pattern in the data (leak timing and shape, removals, hours, pressure, residual events) and to the mask
+type the user recorded. Name real, currently sold mask types and models only as examples, without favouring a brand, and say that a mask change goes
+through the prescriber or equipment supplier with a proper fitting. If a suggestion would not be one a sleep physician would endorse, do not make it.
 """
 
 
@@ -45,11 +49,13 @@ def build_context(nights, start, end, diag_ahi=None):
                 evs.append(f"{n.label} {e.start:%H:%M:%S} {e.label} [{e.source}] {e.duration:.0f}s {ptxt} {ltxt} {e.detail}")
     if len(evs) > 400: evs = evs[:400] + [f'... {len(evs) - 400} more events omitted']
     total, hit = scoring.validation_summary(sel)
+    eq = equipment.context_text(sel, equipment.load_profile(SETTINGS), IDENT)
     return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n=== App synopsis (rule based) ===\n{syn}\n\n"
             f"=== Per night statistics (tab separated; P = set pressure cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed scoring) ===\n"
             + '\n'.join(table) + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs)
             + "\n\n=== Method notes ===\nResMed stamps event end; app subtracts duration. App hypopnea = 30% flow drop >= 10 s without desaturation check (over-counts). "
-              f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter is listed above.")
+              f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter is listed above."
+            + "\n\n" + eq)
 
 
 class AskWorker(QtCore.QThread):
@@ -142,7 +148,8 @@ class AskView(QtWidgets.QWidget):
         <p>You need an API key: create one at <a href='https://console.anthropic.com/'>console.anthropic.com</a> (API keys). It is billed per use, separately from a claude.ai subscription;
         a question with a month of context costs a few cents. The key is saved on this PC only. Nothing is sent until you press Send.</p>
         <p>Suggested questions: <i>What should I change first?</i> &nbsp; <i>Is the leak on 10/28 the mask or my mouth?</i> &nbsp; <i>Do the central apneas worry you?</i> &nbsp;
-        <i>Write a summary I can give my sleep doctor.</i> &nbsp; <i>Compare the nights under different settings.</i></p>""")
+        <i>Write a summary I can give my sleep doctor.</i> &nbsp; <i>Compare the nights under different settings.</i> &nbsp;
+        <i>Does my leak pattern suggest a different mask type?</i></p>""")
 
     def set_nights(self, nights):
         self.nights = nights

@@ -3,7 +3,7 @@ import os, sys, json, csv, datetime as dt
 import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets, QtGui
-from . import loader, scoring, synopsis, apple_health
+from . import loader, scoring, synopsis, apple_health, equipment
 from .theme import C, EVENT_COLORS, style_plot
 from .ui_night import NightView
 from .ui_ask import AskView, AskWorker, build_context, SYSTEM as ASK_SYSTEM
@@ -12,6 +12,8 @@ from .ui_landscape import LandscapeView
 from .ui_notes import NotesView
 from .ui_help import HelpView
 from .ui_home import HomeView
+from .ui_equipment import EquipmentView
+from . import ui_ask
 from .branding import Page, LogoWidget, app_icon
 
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
@@ -51,7 +53,7 @@ class Table(QtWidgets.QTableWidget):
                 self.setItem(r, c, it)
         self.resizeColumnsToContents()
     def to_csv(self, path):
-        with open(path, 'w', newline='') as f:
+        with open(path, 'w', newline='', encoding='utf-8-sig') as f:
             w = csv.writer(f); w.writerow([self.horizontalHeaderItem(c).text() for c in range(self.columnCount())])
             for r in range(self.rowCount()): w.writerow([self.item(r, c).text() if self.item(r, c) else '' for c in range(self.columnCount())])
 
@@ -122,7 +124,7 @@ class OverviewView(QtWidgets.QWidget):
         else:
             p = plot(3, 1, 'Time at max pressure (% of night) and periodic breathing windows (magenta)', '%')
             bars(p, g('press_at_max_pct'), C['blue']); p.plot(x, g('periodic_windows'), pen=pg.mkPen(C['magenta'], width=2), symbol='o', symbolBrush=C['magenta'], symbolPen=None)
-        tot_h = sum(n.hours for n in nights); ev = sum(s['OA'] + s['CA'] + s['H'] + s['UA'] for s in S)
+        tot_h = sum(n.hours for n in nights) or 1e-9; ev = sum(s['OA'] + s['CA'] + s['H'] + s['UA'] for s in S)
         self.note.setText(f"{len(nights)} nights, {tot_h:.1f} h, mean {tot_h / len(nights):.2f} h/night, machine AHI {ev / tot_h:.2f} overall, app flow-only AHI {np.nanmean(g('app_AHI')):.2f}, app RDI {np.nanmean(g('app_RDI')):.2f}. Click a bar to open that night.")
     def _click(self, ev, p):
         if ev.double(): return
@@ -166,7 +168,7 @@ class BreathView(QtWidgets.QWidget):
 
 class SynopsisView(QtWidgets.QWidget):
     def __init__(self):
-        super().__init__(); self.nights = []
+        super().__init__(); self.nights = []; self.ident = {}
         lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(6, 6, 6, 6)
         bar = QtWidgets.QHBoxLayout(); lay.addLayout(bar)
         bar.addWidget(QtWidgets.QLabel('From')); self.d0 = QtWidgets.QDateEdit(calendarPopup=True); self.d0.setDisplayFormat('MMM d, yyyy'); bar.addWidget(self.d0)
@@ -180,6 +182,8 @@ class SynopsisView(QtWidgets.QWidget):
         gen = QtWidgets.QPushButton('Generate'); gen.setDefault(True); gen.clicked.connect(self.generate); bar.addWidget(gen)
         cp = QtWidgets.QPushButton('Copy'); cp.clicked.connect(self.copy); bar.addWidget(cp)
         sv = QtWidgets.QPushButton('Save HTML…'); sv.clicked.connect(self.save); bar.addWidget(sv)
+        pdf = QtWidgets.QPushButton('Doctor visit PDF…'); pdf.setToolTip('One document for an appointment: the synopsis, Claude\'s reading, your equipment and how you use it, and space for questions')
+        pdf.clicked.connect(self.save_pdf); bar.addWidget(pdf)
         split = QtWidgets.QSplitter(); lay.addWidget(split, 1)
         left = QtWidgets.QWidget(); ll = QtWidgets.QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
         lt = QtWidgets.QLabel('Rule based synopsis (computed on this PC)'); lt.setStyleSheet('font-weight:700; color:#1d4f91; padding:4px'); ll.addWidget(lt)
@@ -210,7 +214,9 @@ class SynopsisView(QtWidgets.QWidget):
         if not self.nights: return
         a = self.d0.date().toPython(); b = self.d1.date().toPython()
         if a > b: a, b = b, a
-        self.html = synopsis.generate(self.nights, a, b, self.diag.value() or None); self.text.setHtml(self.html)
+        sel = [n for n in self.nights if a <= n.date <= b]
+        eq = equipment.synopsis_html(sel, equipment.load_profile(SETTINGS), self.ident) if sel else ''
+        self.html = synopsis.generate(self.nights, a, b, self.diag.value() or None, extra_html=eq); self.text.setHtml(self.html)
         if self.auto.isChecked(): self.ask_claude(force=False)
     # ---- Claude narrative
     def ask_claude(self, force=False):
@@ -223,10 +229,10 @@ class SynopsisView(QtWidgets.QWidget):
         if a > b: a, b = b, a
         sel = [n for n in self.nights if a <= n.date <= b]
         if not sel: return
-        sig = hashlib.md5(('|'.join(f"{n.date}:{n.hours:.3f}:{n.stats.get('AHI', 0):.3f}:{n.stats.get('spo2_mean', 0)}" for n in sel) + f"|{self.diag.value()}|{SETTINGS.value('about_me', '')}").encode()).hexdigest()
+        sig = hashlib.md5(('|'.join(f"{n.date}:{n.hours:.3f}:{n.stats.get('AHI', 0):.3f}:{n.stats.get('spo2_mean', 0)}" for n in sel) + f"|{self.diag.value()}|{SETTINGS.value('about_me', '')}|{SETTINGS.value('equipment', '')}").encode()).hexdigest()
         cache = SETTINGS.value('claude_synopsis_cache', {}) or {}
         if not force and sig in cache:
-            self.claude_text.setMarkdown(cache[sig]); self.claude_status.setText(f'Shown from cache ({a} to {b}). Press Ask Claude now to refresh.'); return
+            self.claude_text.setMarkdown(cache[sig]); self._claude_ok = True; self.claude_status.setText(f'Shown from cache ({a} to {b}). Press Ask Claude now to refresh.'); return
         if not force and len(cache) >= 1 and SETTINGS.value('auto_claude', 'true') != 'true': return
         ctx = build_context(self.nights, a, b, self.diag.value() or None)
         about = SETTINGS.value('about_me', '').strip()
@@ -239,7 +245,7 @@ class SynopsisView(QtWidgets.QWidget):
         self.worker = AskWorker(key, SETTINGS.value('model', 'claude-sonnet-5-5'), sysmsg, [{'role': 'user', 'content': prompt}])
         self.worker.done.connect(self._claude_done); self.worker.failed.connect(self._claude_fail); self.worker.start()
     def _claude_done(self, text):
-        self.claude_btn.setEnabled(True); self.claude_text.setMarkdown(text)
+        self.claude_btn.setEnabled(True); self.claude_text.setMarkdown(text); self._claude_ok = True
         cache = SETTINGS.value('claude_synopsis_cache', {}) or {}
         cache[self._claude_key] = text
         if len(cache) > 30: cache = dict(list(cache.items())[-30:])
@@ -256,7 +262,34 @@ class SynopsisView(QtWidgets.QWidget):
     def copy(self): QtWidgets.QApplication.clipboard().setText(self.text.toPlainText() + '\n\n==== Claude\'s reading ====\n\n' + self.claude_text.toPlainText())
     def save(self):
         p, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save synopsis', 'sleepscope_synopsis.html', 'HTML (*.html)')
-        if p: open(p, 'w', encoding='utf-8').write('<html><body style="font-family:Segoe UI,Arial;max-width:800px;margin:auto">' + getattr(self, 'html', '') + "<hr><h2>Claude's reading</h2>" + self.claude_text.toHtml() + '</body></html>')
+        if p:
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write('<html><body style="font-family:Segoe UI,Arial;max-width:800px;margin:auto">' + getattr(self, 'html', '') + "<hr><h2>Claude's reading</h2>" + self.claude_text.toHtml() + '</body></html>')
+    def visit_html(self):
+        """One printable document for an appointment."""
+        a = self.d0.date().toPython(); b = self.d1.date().toPython()
+        if a > b: a, b = b, a
+        sel = [n for n in self.nights if a <= n.date <= b]
+        claude_html = self.claude_text.document().toHtml() if getattr(self, '_claude_ok', False) else ''
+        prof = equipment.load_profile(SETTINGS)
+        return ('<html><body style="font-family:Segoe UI,Arial; font-size:10pt">'
+                f'<h1 style="color:#1d4f91">SleepScope summary for a doctor visit</h1><p>Data {a:%b %d, %Y} to {b:%b %d, %Y}, prepared {dt.date.today():%b %d, %Y}. '
+                'Computed from the CPAP SD card by SleepScope; not a medical device.</p>'
+                + getattr(self, 'html', '') + (f"<h2>Claude's reading</h2>{claude_html}" if claude_html else '')
+                + equipment.report_html(sel, prof, self.ident)
+                + '<h2>My questions for this visit</h2>' + ''.join('<p>' + '_' * 90 + '</p>' for _ in range(6)) + '</body></html>')
+    def save_pdf(self):
+        if not self.nights: return
+        p, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save doctor visit PDF', f'sleepscope_visit_{dt.date.today():%Y-%m-%d}.pdf', 'PDF (*.pdf)')
+        if p: write_pdf(self.visit_html(), p)
+
+
+def write_pdf(html_text, path):
+    from PySide6 import QtPrintSupport
+    doc = QtGui.QTextDocument(); doc.setHtml(html_text)
+    pr = QtPrintSupport.QPrinter(QtPrintSupport.QPrinter.HighResolution); pr.setOutputFormat(QtPrintSupport.QPrinter.PdfFormat); pr.setOutputFileName(path)
+    pr.setPageSize(QtGui.QPageSize(QtGui.QPageSize.Letter)); pr.setPageMargins(QtCore.QMarginsF(15, 15, 15, 15), QtGui.QPageLayout.Millimeter)
+    doc.print_(pr)
 
 
 METHODS = """
@@ -296,6 +329,13 @@ five minutes or more under 88% in a night flagged). It is deterministic: the sam
 <p><b>Apple Health.</b> Import the export.zip the Health app produces (Profile picture, Export All Health Data). Sleep stages, heart rate, HRV, respiratory
 rate and Watch SpO2 are matched to each night. The Watch's stages come from motion and heart rate, not EEG, so treat them as approximate.
 Writing CPAP data into Apple Health needs an iOS app and cannot be done from Windows.</p>
+<p><b>Equipment tab.</b> The machine, mask and supply dates are typed in by you and stored on this PC. Usage patterns come from the last 30 nights
+loaded: hours and mid-night removals (more than one session in a night, and whether a break came within 5 minutes of a large leak), leak episodes split into
+sustained (10 minutes or more, typical of mouth leak or a shifted cushion) and brief (under 3 minutes, typical of movement), large leak in the first versus the
+last third of the night, median leak in the lowest versus highest quarter of set pressure, and the month on month trend in 95th percentile leak. Suggestions
+are tied to the pattern that raised them and are phrased as options for the prescriber or equipment supplier. The mask type guidance draws on Andrade et al.,
+Chest 2018 (nasal versus oronasal CPAP meta-analysis); replacement intervals follow the Medicare (CMS) PAP supply schedule. Product names are examples of each
+mask type, listed by brand in alphabetical order, checked against manufacturer and supplier pages in October 2026.</p>
 <p><b>This is not a medical device.</b> Use it to understand the data and to bring better questions to the person who manages the prescription.</p>
 """
 
@@ -322,11 +362,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tabs = QtWidgets.QTabWidget(); split.addWidget(self.tabs); split.setSizes([470, 1030])
         self.home = HomeView(); self.home.action.connect(self._home_action); self.tabs.addTab(self.home, 'Start here')
-        self.tabs.addTab(Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'), 'How to use')
+        self.help_page = Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'); self.tabs.addTab(self.help_page, 'How to use')
         self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(Page(self.overview, 'Overview', 'Trends across nights. Click a bar to open that night.', '#2a78d6'), 'Overview')
         self.synopsis = SynopsisView(); self.tabs.addTab(Page(self.synopsis, 'Synopsis', 'Plain English report for any date range, with Claude\'s reading beside it.', '#1baf7a'), 'Synopsis')
         self.landscape = LandscapeView(); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed; the key on the right explains the rest.', '#6250d6'), '3D Landscape')
         self.ask = AskView(); self.tabs.addTab(Page(self.ask, 'Ask Claude', 'Questions about your results, answered from your numbers and saved for later.', '#eb6834'), 'Ask Claude')
+        self.equipment = EquipmentView(); self.tabs.addTab(Page(self.equipment, 'Equipment', 'Your machine and mask, how the data says you use them, and options worth raising with your doctor or supplier.', '#0f8f8a'), 'Equipment')
+        self.equipment.saved.connect(self._equipment_saved)
         self.notes = NotesView(); self.tabs.addTab(Page(self.notes, 'Saved answers', 'Everything Claude has written for you, searchable.', '#d95926'), 'Saved answers')
         self.notes.continue_requested.connect(self._continue_conversation)
         self.ask.answer_saved.connect(self.notes.refresh); self.ask.key_saved.connect(lambda: (self._refresh_home(), self.synopsis.ask_claude(force=False)))
@@ -340,7 +382,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stats_table = Table([h for _, h, _ in scoring.STAT_COLUMNS]); self.tabs.addTab(Page(self.stats_table, 'Statistics', 'Every number for every night. Export to CSV from the toolbar.', '#eda100'), 'Statistics')
         dev = QtWidgets.QWidget(); dl = QtWidgets.QVBoxLayout(dev); self.dev_text = QtWidgets.QLabel(''); self.dev_text.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         dl.addWidget(self.dev_text); self.str_table = Table(['Day']); dl.addWidget(self.str_table); self.tabs.addTab(Page(dev, 'Device and settings', 'Machine identity and the machine\'s own daily summary when the card root is opened.', '#8a8985'), 'Device and settings')
-        meth = QtWidgets.QTextBrowser(); meth.setHtml(METHODS); self.tabs.addTab(Page(meth, 'Methods', 'How every number is computed and how far to trust it.', '#1d4f91'), 'Methods')
+        meth = QtWidgets.QTextBrowser(); meth.setOpenExternalLinks(True); meth.setHtml(METHODS); self.tabs.addTab(Page(meth, 'Methods', 'How every number is computed and how far to trust it.', '#1d4f91'), 'Methods')
         self.tabs.currentChanged.connect(self._tab_changed)
         self._refresh_home()
         last = SETTINGS.value('root', '')
@@ -358,6 +400,7 @@ class MainWindow(QtWidgets.QMainWindow):
         SETTINGS.remove('root'); self.data = None; self.nights = []; self.current = None
         self.night_table.setRowCount(0); self.stats_table.setRowCount(0); self.ev_table.setRowCount(0); self.device_label.setText(''); self.dev_text.setText('')
         self.overview.gl.clear(); self.breaths.gl.clear(); self.night_view.set_night(None); self.synopsis.text.setHtml('<p>No data loaded.</p>')
+        self.synopsis.nights = []; self.equipment.set_nights([]); self.ask.set_nights([])
         if hasattr(self.landscape, 'gl'):
             for it in self.landscape.items: self.landscape.gl.removeItem(it)
             self.landscape.items = []
@@ -383,11 +426,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress.setVisible(False); QtWidgets.QMessageBox.critical(self, 'Load failed', tb)
     def _loaded(self, data):
         self.data = data; self.nights = data['nights']; self.progress.setVisible(False)
-        ident = data.get('identification') or {}
+        ident = data.get('identification') or {}; self.synopsis.ident = ident; ui_ask.IDENT.clear(); ui_ask.IDENT.update(ident)
+        self.equipment.set_identification(ident); self.equipment.set_nights(self.nights)
         self.device_label.setText(f"{ident.get('model', 'Unknown device')}  SN {ident.get('serial', '?')}\n{data['datalog']}")
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
         self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
-        if self.nights: self.select_night(len(self.nights) - 1); self.tabs.setCurrentWidget(self.synopsis)
+        if self.nights: self.select_night(len(self.nights) - 1); self.show_tab(self.synopsis)
         if not self.nights: QtWidgets.QMessageBox.information(self, 'No data', 'No sessions of 5 minutes or longer were found under that folder.')
 
     def _fill_nights(self):
@@ -422,22 +466,31 @@ class MainWindow(QtWidgets.QMainWindow):
         if not rows: return
         nt = self.nights[rows[0].row()]; self.current = nt
         self.night_view.set_night(nt); self.breaths.set_night(nt); self._fill_events()
-        if self.tabs.currentIndex() == 0: self.tabs.setCurrentIndex(1)
+        if self.tabs.currentWidget() in (self.home, self.help_page): self.show_tab(self.night_view)
+    def show_tab(self, widget):
+        """Switch to the tab holding widget. Most tabs wrap their view in a Page, so setCurrentWidget(view) alone does nothing."""
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if w is widget or getattr(w, 'inner', None) is widget: self.tabs.setCurrentIndex(i); return
+    def _equipment_saved(self):
+        self.synopsis.generate(); self._refresh_home()
     def _home_action(self, a):
         if a == 'open': self.open_card()
-        elif a == 'synopsis': self.tabs.setCurrentWidget(self.synopsis)
-        elif a == 'landscape': self.tabs.setCurrentWidget(self.landscape)
-        elif a == 'ask': self.tabs.setCurrentWidget(self.ask); self.ask.key.setFocus()
+        elif a == 'synopsis': self.show_tab(self.synopsis)
+        elif a == 'landscape': self.show_tab(self.landscape)
+        elif a == 'ask': self.show_tab(self.ask); self.ask.key.setFocus()
+        elif a == 'equipment': self.show_tab(self.equipment)
         elif a == 'oximeter': self.import_oximeter()
         elif a == 'apple': self.import_apple()
     def _refresh_home(self):
         ox = any(s.has_oximetry for n in self.nights for s in n.sessions); ap = any(getattr(n, 'apple', None) for n in self.nights)
-        self.home.update_status(self.nights, SETTINGS.value('api_key', ''), ox, ap)
+        self.home.update_status(self.nights, SETTINGS.value('api_key', ''), ox, ap, equipment.has_any(equipment.load_profile(SETTINGS)))
     def _tab_changed(self, i):
-        if self.tabs.widget(i) is getattr(self, 'home', None): self._refresh_home()
-        if self.tabs.widget(i) is getattr(self, 'notes', None): self.notes.refresh()
+        w = self.tabs.widget(i); inner = getattr(w, 'inner', w)
+        if w is getattr(self, 'home', None): self._refresh_home()
+        if inner is getattr(self, 'notes', None): self.notes.refresh()
     def _continue_conversation(self, pairs):
-        self.ask.load_history(pairs); self.tabs.setCurrentWidget(self.ask)
+        self.ask.load_history(pairs); self.show_tab(self.ask)
     def _fill_events(self):
         nt = getattr(self, 'current', None)
         if nt is None: return
@@ -458,19 +511,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._ev_objs.append(e)
         self.ev_table.fill(rows)
     def _event_dbl(self, idx):
-        e = self._ev_objs[idx.row()]; self.tabs.setCurrentIndex(1); self.night_view.goto_event(e)
+        e = self._ev_objs[idx.row()]; self.show_tab(self.night_view); self.night_view.goto_event(e)
 
     # ------------------------------------------------------------------ oximeter and export
     def import_oximeter(self):
-        if not self.nights: return
+        if not self.nights: self.statusBar().showMessage('Open the SD card first; oximeter readings are matched to the nights on it.'); return
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Oximeter CSV export (Wellue O2Ring, Checkme, generic)', '', 'CSV (*.csv);;All files (*)')
         if not p: return
         n = loader.import_oximeter_csv(p, self.nights)
         for nt in self.nights: scoring.night_stats(nt)
         self._fill_stats(); self.overview.set_nights(self.nights); self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights); self._refresh_home()
+        if n == 0:
+            QtWidgets.QMessageBox.warning(self, 'Oximeter import', 'No readings matched a session. Check that the file is a CSV with a time column and an SpO2 or oxygen column, and that its dates overlap the nights loaded from the card.'); return
         QtWidgets.QMessageBox.information(self, 'Oximeter import', f'SpO2 and pulse attached to {n} session(s) by timestamp.')
     def import_apple(self):
-        if not self.nights: return
+        if not self.nights: self.statusBar().showMessage('Open the SD card first; Apple Health data is matched to the nights on it.'); return
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Apple Health export (export.zip or export.xml)', '', 'Apple Health export (*.zip *.xml);;All files (*)')
         if not p: return
         self.statusBar().showMessage('Reading Apple Health export, this can take a minute for a large file...'); QtWidgets.QApplication.processEvents()
@@ -488,7 +543,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.nights: return
         p, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save events CSV', 'sleepscope_events.csv', 'CSV (*.csv)')
         if not p: return
-        with open(p, 'w', newline='') as f:
+        with open(p, 'w', newline='', encoding='utf-8-sig') as f:
             w = csv.writer(f); w.writerow(['night', 'start', 'end', 'duration_s', 'type', 'source', 'detail'])
             for nt in self.nights:
                 for s in nt.sessions:

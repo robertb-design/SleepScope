@@ -36,7 +36,7 @@ def _settings_runs(nights):
     return runs
 
 
-def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None = None) -> str:
+def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None = None, extra_html: str = '') -> str:
     sel = [n for n in nights if start <= n.date <= end]
     if not sel:
         return '<p>No therapy nights in that range.</p>'
@@ -188,6 +188,8 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
             cov = [100 * min(n.hours, n.apple['asleep_h']) / n.apple['asleep_h'] for n in on if n.apple['asleep_h'] > 0]
             if cov: p(f'The machine covered about {np.mean(cov):.0f}% of the sleep the Watch recorded. The gap is untreated sleep; closing it is worth more than any pressure change.')
         p('Deep and REM minutes, and a falling overnight heart rate and rising HRV over weeks, are the Watch-side evidence that treated sleep is restorative. Compare nights with the mask on all night against split nights.')
+
+    if extra_html: H_.append(extra_html)
 
     # ---- bottom line
     h2('What this means for you')
