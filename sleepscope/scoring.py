@@ -180,11 +180,12 @@ def periodic_breathing(s: Session, win_s=300, step_s=60):
         if x.std() < 1e-3 or (x == 0).mean() > 0.3:
             continue
         x = x - x.mean()
+        x = x - np.convolve(x, np.ones(31) / 31, 'same')      # remove slow drift so only true cycles correlate
         ac = np.correlate(x, x, 'full')[win_s - 1:]
         ac /= ac[0] + 1e-9
         lo, hi = 30, 90
         k = lo + int(np.argmax(ac[lo:hi]))
-        if ac[k] > 0.5 and ac[k] > ac[lo:hi].mean() + 0.2:
+        if lo < k < hi - 1 and ac[k] > 0.5 and ac[k] > ac[k - 1] and ac[k] > ac[k + 1] and ac[k] > ac[lo:hi].mean() + 0.2:
             out.append((st, k, float(ac[k])))
     # merge overlapping windows
     merged = []
@@ -208,6 +209,18 @@ def leak_episodes(s: Session, thresh=LEAK_LARGE, min_s=60):
 
 
 # ----------------------------------------------------------------------------- night statistics
+def validation_summary(nights):
+    """How many machine apneas the app's own detector reproduced on the loaded card."""
+    total = hit = 0
+    for nt in nights:
+        for s in nt.sessions:
+            for m in s.machine_events:
+                if 'Apnea' not in m.label: continue
+                total += 1
+                if any('Apnea' in e.label and (e.start - dt.timedelta(seconds=15)) <= m.start <= e.end + dt.timedelta(seconds=5) for e in s.app_events): hit += 1
+    return total, hit
+
+
 def night_stats(nt: Night) -> dict:
     ss = nt.sessions; hrs = nt.hours
     def cat(key, scale=1.0):
@@ -223,7 +236,7 @@ def night_stats(nt: Night) -> dict:
     app_unflag = cnt(aev, 'Apnea (unflagged by machine)')
     pmax = float(pr.max()) if len(pr) else np.nan; pmin = float(pr.min()) if len(pr) else np.nan
     at_max = float((pr >= pmax - 0.1).mean()) if len(pr) else np.nan
-    after_ramp = pr[int(len(pr) * 0.15):] if len(pr) > 20 else pr
+    after_ramp = pr[max(int(len(pr) * 0.15), min(900, len(pr) // 2)):] if len(pr) > 20 else pr
     mode = 'CPAP' if len(after_ramp) and after_ramp.std() < 0.05 else 'AutoSet'
     sp = np.concatenate([s.spo2 for s in ss if s.spo2 is not None]) if any(s.spo2 is not None for s in ss) else np.array([])
     spv = sp[(sp > 50) & (sp <= 100)]
@@ -261,7 +274,7 @@ def night_stats(nt: Night) -> dict:
         pifpef_med=float(np.median(pifpef)) if len(pifpef) else np.nan, plateau_med=float(np.median(plateau)) if len(plateau) else np.nan,
         periodic_windows=pb,
         spo2_mean=float(spv.mean()) if len(spv) else np.nan, spo2_min=float(spv.min()) if len(spv) else np.nan,
-        spo2_pct_lt90=float((spv < 90).mean() * 100) if len(spv) else np.nan, spo2_pct_lt88=float((spv < 88).mean() * 100) if len(spv) else np.nan, ODI=odi / hrs if len(spv) and hrs else np.nan,
+        spo2_pct_lt90=float((spv < 90).mean() * 100) if len(spv) else np.nan, spo2_pct_lt88=float((spv < 88).mean() * 100) if len(spv) else np.nan, ODI=odi / (len(spv) / 3600) if len(spv) > 600 else np.nan, spo2_minutes_lt88=float((spv < 88).sum() / 60) if len(spv) else np.nan,
         pulse_mean=float(puv.mean()) if len(puv) else np.nan, pulse_min=float(puv.min()) if len(puv) else np.nan, pulse_max=float(puv.max()) if len(puv) else np.nan,
     )
     nt.stats = d
@@ -286,5 +299,5 @@ _FMT = {k: f for k, _, f in STAT_COLUMNS}
 
 def fmt(key, val):
     if val is None or (isinstance(val, float) and np.isnan(val)): return ''
-    try: return _FMT.get(key, '{}').format(val)
+    try: return (_FMT.get(key) or '{}').format(val)
     except Exception: return str(val)

@@ -234,7 +234,7 @@ def import_oximeter_csv(path, nights):
         return None
     ti, si, pi = col('time', 'date'), col('spo2', 'oxygen', 'o2'), col('pulse', 'hr', 'heart')
     if ti is None or si is None: return 0
-    fmts = ['%H:%M:%S %m/%d/%Y', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%H:%M:%S %d/%m/%Y', '%Y-%m-%dT%H:%M:%S']
+    fmts = ['%H:%M:%S %m/%d/%Y', '%I:%M:%S %p %m/%d/%Y', '%m/%d/%Y %I:%M:%S %p', '%Y-%m-%d %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%H:%M:%S %d/%m/%Y', '%Y-%m-%dT%H:%M:%S']
     ts, sp, pu = [], [], []
     fmt = None
     for r in rows[1:]:

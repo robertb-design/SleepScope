@@ -16,7 +16,7 @@ DEFAULT_MODEL = 'claude-sonnet-5-5'
 C_ERR = '#e34948'
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
 
-SYSTEM = """You are a sleep-therapy data analyst helping the owner of a ResMed AirSense 11 AutoSet understand his own CPAP data.
+SYSTEM = """You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data.
 Give plain, direct, well-reasoned answers with no filler. If the user has written an About me note, use it to pitch the answer.
 You have the app's computed results for the selected date range in the CONTEXT block. Use those numbers; do not invent data.
 When a question needs something not in the context, say so and name what would answer it (an oximeter, STR.edf, a longer range, the prescriber).
@@ -39,14 +39,17 @@ def build_context(nights, start, end, diag_ahi=None):
         for s in n.sessions:
             for e in sorted(s.machine_events + s.app_events, key=lambda e: e.start):
                 if e.label in ('Flow Limitation Run',) and 'RERA' not in e.detail: continue
-                i2 = int((e.start - s.start).total_seconds() / 2); pr = s.ch.get('Press'); lk = s.ch.get('Leak')
-                evs.append(f"{n.label} {e.start:%H:%M:%S} {e.label} [{e.source}] {e.duration:.0f}s P={pr[min(i2, len(pr) - 1)]:.1f} leak={lk[min(i2, len(lk) - 1)] * 60:.0f} {e.detail}")
+                i2 = max(0, int((e.start - s.start).total_seconds() / 2)); pr = s.ch.get('Press'); lk = s.ch.get('Leak')
+                ptxt = f"P={pr[min(i2, len(pr) - 1)]:.1f}" if pr is not None and len(pr) else 'P=?'
+                ltxt = f"leak={lk[min(i2, len(lk) - 1)] * 60:.0f}" if lk is not None and len(lk) else 'leak=?'
+                evs.append(f"{n.label} {e.start:%H:%M:%S} {e.label} [{e.source}] {e.duration:.0f}s {ptxt} {ltxt} {e.detail}")
     if len(evs) > 400: evs = evs[:400] + [f'... {len(evs) - 400} more events omitted']
+    total, hit = scoring.validation_summary(sel)
     return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n=== App synopsis (rule based) ===\n{syn}\n\n"
             f"=== Per night statistics (tab separated; P = set pressure cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed scoring) ===\n"
             + '\n'.join(table) + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs)
             + "\n\n=== Method notes ===\nResMed stamps event end; app subtracts duration. App hypopnea = 30% flow drop >= 10 s without desaturation check (over-counts). "
-              "App apnea reproduced 18 of 19 machine apneas on validation. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter is listed above.")
+              f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter is listed above.")
 
 
 class AskWorker(QtCore.QThread):
@@ -139,7 +142,7 @@ class AskView(QtWidgets.QWidget):
         <p>You need an API key: create one at <a href='https://console.anthropic.com/'>console.anthropic.com</a> (API keys). It is billed per use, separately from a claude.ai subscription;
         a question with a month of context costs a few cents. The key is saved on this PC only. Nothing is sent until you press Send.</p>
         <p>Suggested questions: <i>What should I change first?</i> &nbsp; <i>Is the leak on 10/28 the mask or my mouth?</i> &nbsp; <i>Do the central apneas worry you?</i> &nbsp;
-        <i>Write a summary I can give my sleep doctor.</i> &nbsp; <i>Compare the CPAP 9 nights to the AutoSet nights.</i></p>""")
+        <i>Write a summary I can give my sleep doctor.</i> &nbsp; <i>Compare the nights under different settings.</i></p>""")
 
     def set_nights(self, nights):
         self.nights = nights

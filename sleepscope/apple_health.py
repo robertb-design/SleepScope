@@ -97,6 +97,7 @@ def attach(data, nights):
         if stages:
             w0 = min(st for st, _, _ in stages); w1 = max(en for _, en, _ in stages)
             hr_n = [(t, v) for t, v in hr if w0 <= t <= w1]; sp_n = [(t, v) for t, v in sp if w0 <= t <= w1]
+            hrv = [(t, v) for t, v in hrv if w0 - dt.timedelta(hours=1) <= t <= w1 + dt.timedelta(hours=1)]; rr = [(t, v) for t, v in rr if w0 <= t <= w1]
         else:
             hr_n, sp_n = hr, sp
         nt.apple = dict(

@@ -28,7 +28,7 @@ def _settings_runs(nights):
     """Group consecutive nights with the same (mode, min, max) so settings changes can be described."""
     runs = []
     for n in nights:
-        s = n.stats; key = (s['mode'], round(s['press_min']), round(s['press_max']))
+        s = n.stats; key = (s['mode'], None if not np.isfinite(s['press_min']) else round(s['press_min']), None if not np.isfinite(s['press_max']) else round(s['press_max']))
         if runs and runs[-1]['key'] == key:
             runs[-1]['nights'].append(n)
         else:
@@ -48,8 +48,8 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
     nights_4h = int((hours >= 4).sum())
     compliance_pct = 100 * nights_4h / all_days
     ahi = _wmean(sel, 'AHI'); ahi_app = _wmean(sel, 'app_AHI'); rdi = _wmean(sel, 'app_RDI')
-    OA = sum(n.stats['OA'] for n in sel); CA = sum(n.stats['CA'] for n in sel); H = sum(n.stats['H'] for n in sel)
-    tot_ev = OA + CA + H
+    OA = sum(n.stats['OA'] for n in sel); CA = sum(n.stats['CA'] for n in sel); H = sum(n.stats['H'] for n in sel); UA = sum(n.stats['UA'] for n in sel)
+    tot_ev = OA + CA + H + UA
     cai = CA / tot_h if tot_h else 0
     leak95 = _mean(sel, 'leak_95'); leak_pct = _wmean(sel, 'leak_pct_large'); leak_nights = [n for n in sel if n.stats['leak_pct_large'] > 5]
     fl95 = _mean(sel, 'flowlim_95'); fl_min = _mean(sel, 'flowlim_minutes')
@@ -81,28 +81,31 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
     # ---- breathing events
     h2('Breathing events during therapy')
     if ahi < 5:
-        p(f'The machine scored an AHI of {ahi:.1f} events per hour over the range. Anything under 5 is considered controlled; under 2 is as good as treatment gets. While the mask is on, the apnea is handled.')
+        p(f'The machine scored an AHI of {ahi:.1f} events per hour over the range. Under 5 is the normal range on the standard severity scale (5 to 15 mild, 15 to 30 moderate, over 30 severe). While the mask is on, the apnea is controlled.')
     elif ahi < 15:
-        p(f'The machine scored an AHI of {ahi:.1f} events per hour, which is residual mild sleep apnea on treatment. Under 5 is the target. The breakdown below says where the leftover events come from and whether pressure or leak is the likely reason.')
+        p(f'The machine scored an AHI of {ahi:.1f} events per hour, which is residual mild sleep apnea on treatment (normal is under 5; 15 to 30 moderate, over 30 severe). The breakdown below says where the leftover events come from and whether pressure or leak is the likely reason.')
+    elif ahi < 30:
+        p(f'The machine scored an AHI of {ahi:.1f} events per hour, moderate sleep apnea despite treatment. This needs to go to whoever manages the prescription with this report in hand.')
     else:
-        p(f'The machine scored an AHI of {ahi:.1f} events per hour. That is not controlled, and this needs to go to whoever manages the prescription with this report in hand.')
+        p(f'The machine scored an AHI of {ahi:.1f} events per hour, severe sleep apnea despite treatment. Take this report to the prescriber promptly.')
     if diagnostic_ahi:
         red = 100 * (1 - ahi / diagnostic_ahi) if diagnostic_ahi > 0 else 0
-        p(f'Against your diagnostic AHI of {diagnostic_ahi:.0f}, that is a {red:.0f}% reduction in events while on therapy. Each untreated event is an airway collapse, an oxygen dip and a cortisol and blood pressure surge; removing {red:.0f}% of them is the direct health effect of the machine.')
+        p(f'Against your diagnostic AHI of {diagnostic_ahi:.0f}, that is a {red:.0f}% reduction in events while on therapy. Untreated events disturb sleep and, when they drop oxygen, stress the heart and blood vessels; removing most of them is the direct effect of the machine.')
     if tot_ev:
         mix = []
         if OA: mix.append(f'{OA} obstructive apnea{"s" if OA > 1 else ""} ({100 * OA / tot_ev:.0f}%)')
         if CA: mix.append(f'{CA} central ({100 * CA / tot_ev:.0f}%)')
         if H: mix.append(f'{H} hypopnea{"s" if H > 1 else ""} ({100 * H / tot_ev:.0f}%)')
+        if UA: mix.append(f'{UA} unclassified apnea{"s" if UA > 1 else ""} ({100 * UA / tot_ev:.0f}%)')
         p('Event mix: ' + ', '.join(mix) + '.')
     if CA and cai > 5 and CA / tot_ev > 0.5:
         p(f'Central apneas dominate (index {cai:.1f}/h). Centrals are the brain not sending the signal to breathe, and when they appear on CPAP in numbers they can be caused by the pressure itself (treatment emergent central apnea). This is a conversation for the sleep physician; it is the one pattern in this report that can mean the machine type is wrong.')
     elif CA:
-        p(f'The {CA} central apnea{"s" if CA > 1 else ""} (index {cai:.1f}/h) {"are" if CA > 1 else "is"} at a level found in healthy sleepers. In the waveforms they sit right after a sigh or an arousal, which is the benign post-arousal kind, not the treatment-emergent kind. Nothing to act on unless the count climbs.')
+        p(f'The {CA} central apnea{"s" if CA > 1 else ""} (index {cai:.1f}/h) {"are" if CA > 1 else "is"} below the treatment-emergent threshold (central index over 5 with centrals making up more than half of events). A few centrals after a sigh or an arousal are normal physiology; look at them in the Night tab to see whether yours follow that pattern. Nothing to act on unless the count climbs.')
     if periodic:
-        p(f'The periodic breathing detector flagged {periodic} five-minute window{"s" if periodic > 1 else ""} with a 30 to 90 second waxing and waning cycle. A handful across a week is noise; a cluster on one night, or several every night, is a Cheyne-Stokes pattern that should be looked at.')
+        p(f'The periodic breathing detector flagged {periodic} five-minute window{"s" if periodic > 1 else ""} with a 30 to 90 second waxing and waning cycle. A handful across a week can be noise; a cluster on one night, or several every night, is a Cheyne-Stokes pattern that should be looked at in the Night tab and raised with the prescriber.')
     else:
-        p('No periodic (Cheyne-Stokes) breathing pattern was found. That pattern is associated with heart failure and is the main thing a central-apnea screen looks for; its absence is good news.')
+        p('The periodic breathing detector found no 30 to 90 second waxing and waning cycle in any five-minute window. That pattern (Cheyne-Stokes) is associated with heart failure; the detector is a screen, not a diagnosis, but a clean result is reassuring.')
     p(f'The app\'s own flow-only scoring finds {ahi_app:.1f} reduced-breathing events per hour (RDI {rdi:.1f} when flow limitation runs with a recovery breath are included). That number is always higher than the machine\'s because it counts every 30% dip in airflow lasting 10 s, whether or not it dropped your oxygen or woke you. Read it as the ceiling on what a lab would score, not as the AHI.'
       + (f' It also found {unflag} pause{"s" if unflag > 1 else ""} the machine did not flag; look at them in the Night tab to judge whether they are real.' if unflag else ''))
 
@@ -113,20 +116,22 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
         desc = '; '.join(f"{r['nights'][0].label}{' to ' + r['nights'][-1].label if len(r['nights']) > 1 else ''}: {r['key'][0]} {r['key'][1]} to {r['key'][2]}" if r['key'][0] == 'AutoSet' else f"{r['nights'][0].label}{' to ' + r['nights'][-1].label if len(r['nights']) > 1 else ''}: CPAP fixed {r['key'][2]}" for r in runs)
         p(f'Settings changed {len(runs) - 1} time{"s" if len(runs) > 2 else ""} in this range ({desc}). Settings read from the pressure trace, so the min on AutoSet nights can show the ramp floor rather than the set minimum. Comparing AHI across the runs:')
         H_.append('<ul>' + ''.join(f"<li>{r['nights'][0].label}{' to ' + r['nights'][-1].label if len(r['nights']) > 1 else ''}: AHI {_wmean(r['nights'], 'AHI'):.1f}, flow limitation 95th {_mean(r['nights'], 'flowlim_95'):.2f}, leak 95th {_mean(r['nights'], 'leak_95'):.0f} L/min, {sum(n.hours for n in r['nights']):.1f} h</li>" for r in runs) + '</ul>')
-        p('If AHI and flow limitation held steady while the ceiling came down, the lower setting is doing the job. If flow limitation rose, the airway is being held open less firmly even though the event count did not move; that shows up as lighter sleep before it shows up as AHI.')
+        p('If AHI and flow limitation held steady while the ceiling came down, the lower setting is doing the job. If flow limitation rose, the airway is being held open less firmly even though the event count did not move; that shows up as lighter sleep before it shows up as AHI. Single nights swing a lot, so give each setting several nights before judging it.')
     else:
         r = runs[0]['key']
         p(f"Settings were constant: {'AutoSet ' + str(r[1]) + ' to ' + str(r[2]) if r[0] == 'AutoSet' else 'fixed CPAP at ' + str(r[2])} cmH2O.")
     if any(n.stats['mode'] == 'AutoSet' for n in sel):
         auto = [n for n in sel if n.stats['mode'] == 'AutoSet']
-        am = _mean(auto, 'press_at_max_pct')
+        am = _wmean(auto, 'press_at_max_pct')
         p(f'On AutoSet nights the machine spent {am:.0f}% of the time at its ceiling, with a median pressure of {_mean(auto, "press_med"):.1f} and a 95th percentile of {_mean(auto, "press_95"):.1f} cmH2O.'
           + (' Above about 20% at the ceiling means the machine wanted more than it was allowed; whether that matters depends on whether events or flow limitation got through, which the sections above answer.' if am > 20 else ' It had room to work; the ceiling was not a constraint.'))
         p(f'A fixed pressure near the 95th percentile ({_mean(auto, "press_95"):.0f} cmH2O) is the usual starting point if you move to CPAP mode. That is a question for the prescriber, not a change to make on your own.')
 
     # ---- flow limitation
     h2('Flow limitation')
-    if fl95 < 0.15:
+    if not np.isfinite(fl95):
+        p('No flow limitation channel in these nights.')
+    elif fl95 < 0.15:
         p(f'Flow limitation (the airway narrowing short of a scored event) is low: 95th percentile {fl95:.2f}, {fl_min:.0f} minutes a night above 0.2. The airway is being held open cleanly.')
     elif fl95 < 0.35:
         p(f'Flow limitation is moderate: 95th percentile {fl95:.2f}, about {fl_min:.0f} minutes a night above 0.2. This does not count toward AHI but it fragments sleep: each run of flattened breaths tends to end in a small arousal. If you wake unrefreshed with a low AHI, this is usually why, and it is the number that responds to a slightly higher minimum pressure or EPR change.')
@@ -135,15 +140,20 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
 
     # ---- leak
     h2('Mask seal')
-    if leak95 < 24 and not leak_nights:
+    if not np.isfinite(leak95):
+        p('No leak channel in these nights.')
+    elif leak95 < 24 and not leak_nights:
         p(f'Leak is under control: 95th percentile {leak95:.0f} L/min against ResMed\'s 24 L/min line, with {leak_pct:.1f}% of therapy time in large leak. The mask fits.')
     else:
-        p(f'Leak was a problem on {len(leak_nights)} night{"s" if len(leak_nights) > 1 else ""} ({", ".join(f"{n.label} ({n.stats["leak_pct_large"]:.0f}% of the night)" for n in leak_nights)}); overall 95th percentile {leak95:.0f} L/min. During large leak the machine cannot hold pressure or score events reliably, and in your traces tidal volume drops when leak climbs, which means the therapy is being lost, not just the data. Leak that starts mid-night and holds steady is usually mouth opening or a shifted cushion; leak that spikes and recovers is movement. Compare the leak panel with the clock on those nights.')
+        p(f'Leak was a problem on {len(leak_nights)} night{"s" if len(leak_nights) > 1 else ""} ({", ".join(f"{n.label} ({n.stats["leak_pct_large"]:.0f}% of the night)" for n in leak_nights)}); overall 95th percentile {leak95:.0f} L/min. During large leak the machine cannot hold pressure or score events reliably, so therapy is being lost, not just data. Check the tidal volume panel against the leak panel on those nights: if volume falls while leak is high, the leak is costing you ventilation. Leak that starts mid-night and holds steady is usually mouth opening or a shifted cushion; leak that spikes and recovers is movement.')
 
     # ---- breathing mechanics
     h2('Breathing mechanics')
-    p(f'Median respiratory rate {rr:.0f} breaths per minute, tidal volume {tv:.0f} mL, minute ventilation {mv:.1f} L/min. '
-      + ('All in the normal adult range for sleep (12 to 20 breaths/min, 400 to 600 mL, 5 to 8 L/min). Nothing here suggests restrictive lung disease or over-breathing.' if 10 <= rr <= 20 and 350 <= tv <= 700 and 4.5 <= mv <= 9 else 'One or more of these sits outside the usual sleep range (12 to 20 breaths/min, 400 to 600 mL, 5 to 8 L/min). Minute ventilation well above 8 can mean the pressure is high enough to over-ventilate, well below 5 suggests shallow breathing; worth a look with the prescriber if it persists.'))
+    if np.isfinite(rr) and np.isfinite(tv) and np.isfinite(mv):
+        p(f'Median respiratory rate {rr:.0f} breaths per minute, tidal volume {tv:.0f} mL, minute ventilation {mv:.1f} L/min. '
+          + ('All within the usual adult ranges during sleep (about 12 to 20 breaths/min, 400 to 600 mL, 5 to 8 L/min).' if 12 <= rr <= 20 and 400 <= tv <= 600 and 5 <= mv <= 8 else 'One or more of these sits outside the usual adult sleep ranges (about 12 to 20 breaths/min, 400 to 600 mL, 5 to 8 L/min). Machine-estimated volumes are approximate; a value a little outside the band is common. Minute ventilation well above 8 can mean over-ventilation, well below 5 suggests shallow breathing; worth mentioning to the prescriber if it persists.'))
+    else:
+        p('Breathing rate and volume channels were not present for these nights.')
 
     # ---- oximetry
     h2('Oxygen')
@@ -152,6 +162,9 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
         mean_sp = _wmean(ox, 'spo2_mean'); min_sp = min(n.stats['spo2_min'] for n in ox); lt90 = _wmean(ox, 'spo2_pct_lt90'); odi = _wmean(ox, 'ODI')
         min_lt88 = sum(n.stats['spo2_pct_lt88'] * n.hours * 60 / 100 for n in ox if 'spo2_pct_lt88' in n.stats) if all('spo2_pct_lt88' in n.stats for n in ox) else None
         p(f'Oximetry on {len(ox)} night{"s" if len(ox) > 1 else ""}: mean SpO2 {mean_sp:.1f}%, lowest reading {min_sp:.0f}%, {lt90:.1f}% of the night below 90%, 3% desaturation index {odi:.1f} per hour.')
+        lt88_min = sum(n.stats.get('spo2_minutes_lt88', 0) or 0 for n in ox) / len(ox)
+        if lt88_min >= 5:
+            p(f'Time below 88% averaged {lt88_min:.0f} minutes a night. Five minutes or more below 88% in a night is the threshold insurers and physicians use for nocturnal hypoxemia; this is worth raising with the prescriber.')
         if odi < 5 and lt90 < 1:
             p('That is a normal oxygen profile. The point of treating apnea is to stop the repeated oxygen dips that load the heart and blood vessels; on these nights that is happening. This is the number that most directly says the therapy is protecting you.')
         elif odi < 15:
@@ -185,7 +198,7 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
     if fl95 >= 0.15: items.append('Flow limitation is the number to watch if you feel unrefreshed despite a low AHI.')
     if not has_ox: items.append('Add oximetry to see the oxygen side; it is half the picture and currently missing.')
     if CA and cai > 5 and CA / tot_ev > 0.5: items.append('The central apnea pattern needs the prescriber\'s eyes.')
-    if len(runs) > 1: items.append('Hold one setting for at least a week before judging it; night-to-night AHI noise is bigger than the differences between settings so far.')
+    if len(runs) > 1: items.append('Hold one setting for at least a week before judging it; single nights swing too much to compare settings on.')
     H_.append('<ul>' + ''.join(f'<li>{i}</li>' for i in items) + '</ul>')
     p('<i>This synopsis is computed from the card data by fixed rules (listed in the Methods tab). It is a reading of the numbers, not medical advice, and it cannot see what a sleep study sees: EEG sleep stages, effort belts, or a technician\'s judgement. Use it to ask better questions.</i>')
     return '\n'.join(H_)

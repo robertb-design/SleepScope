@@ -21,7 +21,7 @@ def _edf_annotations(path, start: dt.datetime, events, duration_s):
         tals += f'+{onset:.0f}'.encode() + (f'\x15{dur:.0f}'.encode() if dur else b'') + b'\x14' + lab.encode() + b'\x14\x00'
     ns = (len(tals) + 1) // 2 + 1
     tals = tals.ljust(ns * 2, b'\x00')
-    hdr = b'0'.ljust(8) + b'SAMPLE'.ljust(80) + b'Startdate X X X X'.ljust(80) + start.strftime('%d.%m.%y').encode() + start.strftime('%H.%M.%S').encode()
+    hdr = b'0'.ljust(8) + b'X X X SAMPLE'.ljust(80) + b'Startdate X X X X'.ljust(80) + start.strftime('%d.%m.%y').encode() + start.strftime('%H.%M.%S').encode()
     hdr += str(256 + 256).encode().ljust(8) + b'EDF+C'.ljust(44) + str(n_rec).encode().ljust(8) + str(int(rec_dur)).encode().ljust(8) + b'1'.ljust(4)
     hdr += b'EDF Annotations'.ljust(16) + b''.ljust(80) + b''.ljust(8) + b'-1'.ljust(8) + b'1'.ljust(8) + b'-32768'.ljust(8) + b'32767'.ljust(8) + b''.ljust(80) + str(ns).encode().ljust(8) + b''.ljust(32)
     with open(path, 'wb') as f:
@@ -102,7 +102,7 @@ def write_card(root, nights=7, seed=7, first_date: dt.date | None = None):
         for st, hrs in plan:
             s = make_session(st, hrs, rng, pmax=pmax, leak_episode=(d == nights - 2), oximeter=True)
             stem = os.path.join(folder, st.strftime('%Y%m%d_%H%M%S'))
-            dur = int(hrs * 3600)
+            dur = int(hrs * 3600) // 4 * 4      # PLD records are 2 s with 2 samples each; keep whole records
             def sig(label, dim, data, fs, pmin, pmax_):
                 return dict(label=label, dimension=dim, sample_frequency=fs, physical_min=pmin, physical_max=pmax_, digital_min=-32768, digital_max=32767, transducer='', prefilter=''), data
             # BRP

@@ -13,7 +13,7 @@ Nothing leaves this PC unless you use the Ask Claude tab.</p>
 <ol>
 <li>Take the SD card out of the machine (the slot on the side; the machine keeps working without it) and put it in the PC.</li>
 <li>Click <b>Open SD card…</b> and pick the drive letter (for example <b>F:\\</b>). Picking the card root rather than the DATALOG folder also loads the machine's settings file.</li>
-<li>Wait for the progress bar. The app re-scores every night from the raw airflow, about a second per night.</li>
+<li>Wait for the progress bar. The app re-scores every night from the raw airflow, a second or two per night on a modern PC.</li>
 <li>Put the card back in the machine before bed. The app remembers the folder and reopens it next time.</li>
 </ol>
 <p>Tip: copy the whole card to a folder on the PC (for example <b>Documents\\CPAP\\2026-10</b>) now and then. Cards fill, fail and get reformatted; the copy is your history.</p>
@@ -36,7 +36,7 @@ Nothing leaves this PC unless you use the Ask Claude tab.</p>
 <h2>3. The numbers that matter, in plain words</h2>
 <ul>
 <li><b>Hours.</b> The benefit tracks hours per night more than anything else. Four hours on 70% of nights is the insurer's floor; six or more is where people feel the difference.</li>
-<li><b>AHI</b> (events per hour). Under 5 is controlled, under 2 is excellent. The machine's AHI counts only what it is sure of; the app's "AHI app" counts every 30% dip in airflow and is always higher. Read the app number as a ceiling.</li>
+<li><b>AHI</b> (events per hour). Under 5 is the normal range; 5 to 15 mild, 15 to 30 moderate, over 30 severe. The machine's AHI counts only what it is sure of; the app's "AHI app" counts every 30% dip in airflow and is always higher. Read the app number as a ceiling.</li>
 <li><b>Leak.</b> The 95th percentile should stay under 24 L/min. Above that the machine cannot hold pressure and therapy is escaping.</li>
 <li><b>Flow limitation.</b> Airway narrowing short of an event. Does not count in AHI but fragments sleep. If you wake unrefreshed with a low AHI, look here.</li>
 <li><b>Central apneas.</b> A few after a sigh or arousal are normal. Many, or more than half the events, is a question for the sleep doctor.</li>
