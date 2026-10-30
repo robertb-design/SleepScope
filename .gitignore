@@ -1,0 +1,7 @@
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+*_log.txt
+SleepScope-Windows-x64.zip

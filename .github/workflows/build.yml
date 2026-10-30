@@ -1,0 +1,21 @@
+name: Build Windows package
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --noconfirm --clean SleepScope.spec
+      - run: Copy-Item README.md dist/SleepScope/
+      - run: Compress-Archive -Path dist/SleepScope/* -DestinationPath SleepScope-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: SleepScope-Windows-x64, path: SleepScope-Windows-x64.zip }
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with: { files: SleepScope-Windows-x64.zip }
