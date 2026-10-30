@@ -19,7 +19,7 @@ Windows SmartScreen will warn the first time because the exe is not code-signed:
 Ready-made downloads: https://github.com/robertb-design/sleepscope/releases (built automatically by GitHub on every update).
 
 ## Tabs
-- **Start here** a home screen with six numbered, colour coded step cards (get data in, read the synopsis, see the picture, connect Claude, add an oximeter, add Apple Health) that show what is done and open the right place.
+- **Start here** a home screen with seven numbered, colour coded step cards (get data in, read the synopsis, see the picture, connect Claude, add an oximeter, add Apple Health, record your equipment) that show what is done and open the right place.
 - **How to use** the full step by step setup: what you need (card reader), installing, getting the card into the PC, opening it, reading results, Claude API key, oximeter, Apple Health, routine, the numbers in plain words, troubleshooting.
 - **Overview** usage, AHI (machine vs app), event mix, pressure band, leak, flow limitation, breathing, SpO2 when present. Click a bar to open the night.
 - **Night** stacked panels, all time linked: flow (25 Hz), pressure (set, mask, EPR), leak, flow limitation and snore, ventilation ratio,
@@ -43,6 +43,18 @@ Pick a date range (or Last 7 / 14 / 30 / All) and the tab writes a plain English
 breathing checks, settings changes and how AHI and flow limitation behaved under each, leak, breathing mechanics, oxygen (when an oximeter is attached),
 Apple Watch sleep (when imported), and a short "what this means" list. Enter your diagnostic AHI from the sleep study to get the percent reduction.
 Copy or save as HTML to send to the prescriber.
+
+## Equipment
+Record the machine (brand, model, humidifier, heated tube), the mask (type, brand, model, size, chinstrap) and when each part was last replaced.
+The tab then reads how the equipment is being used over the last 30 nights: hours and mid-night removals (and whether a break followed a leak),
+long steady leaks versus brief spikes, leak early versus late in the night, leak at low versus high pressure, and a slow month on month rise in leak.
+Each finding names the numbers behind it, and each option it raises (a new cushion, a chinstrap, a different mask type, a refit) says which pattern
+raised it and gives examples of that mask type from several makers. Everything is framed as something to review with the prescriber or equipment
+supplier. When you change masks, enter the start date and the tab compares the nights before and after. Supply dates are checked against the
+Medicare replacement schedule. The equipment profile and findings are also added to the Synopsis and to every Ask Claude question.
+
+## Doctor visit PDF
+On the Synopsis tab, **Doctor visit PDF…** writes one document for an appointment: the synopsis, Claude's reading, the equipment page and space for questions.
 
 ## Ask Claude
 A chat panel that sends your question plus the synopsis, statistics table and event list for a date range to the Claude API and shows the answer.

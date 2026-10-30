@@ -3,7 +3,7 @@ from PySide6 import QtWidgets
 HELP = """
 <style> h1{color:#1d4f91} h2{color:#2a78d6; margin-top:22px} .box{background:#eef4fc; border-left:5px solid #2a78d6; padding:8px 12px; margin:8px 0} td{vertical-align:top; padding:4px 8px} </style>
 <h1>Setting up the whole system, step by step</h1>
-<p>Follow these in order. Steps 1 to 4 get you reading your own data. Steps 5 to 7 add the oximeter, Apple Watch and Claude. Each step says exactly what to click.</p>
+<p>Follow these in order. Steps 1 to 4 get you reading your own data. Steps 5 to 8 add Claude, the oximeter, Apple Watch and your equipment. Each step says exactly what to click.</p>
 
 <h2>What you need</h2>
 <table>
@@ -74,9 +74,18 @@ HELP = """
 <li>Sleep stages, heart rate, HRV and Watch SpO2 now appear in the Night tab, on the 3D Landscape (the ribbon in front of each strip) and in the Synopsis. Re-import after each new export; it is not remembered between launches.</li>
 </ol>
 
-<h2>Step 8. Routine</h2>
+<h2>Step 8. Record your equipment</h2>
+<ol>
+<li>Open the <b>Equipment</b> tab. Pick your mask type, then brand, model and size (start typing a model to search the list, or type any model). The machine model fills in from the card.</li>
+<li>Enter when you last replaced the cushion, frame, headgear, tubing, filter and water chamber. <b>Today</b> fills in today's date. Click <b>Save equipment</b>.</li>
+<li>The right side shows what the data says about how you use the mask, and options worth raising with your doctor or equipment supplier, each with the pattern behind it.</li>
+<li>When you change masks, set <b>New mask started on</b> to the first night with the new one before saving. The tab then compares the nights before and after.</li>
+</ol>
+
+<h2>Step 9. Routine</h2>
 <ol>
 <li>Each morning (or each week): card out, into the PC, click <b>Reload</b> (or Open SD card if it is a different folder), read the Synopsis, card back in the machine.</li>
+<li>Before an appointment, click <b>Doctor visit PDF…</b> on the Synopsis tab and print it or bring it on your phone.</li>
 <li>Copy the whole card to a folder on the PC every month or so (for example Documents\\CPAP\\2026-10). Cards fail and get reformatted; the copy is your history.</li>
 <li>When a new SleepScope version is released, download the zip again and extract it over the same folder; your settings, key and saved answers are kept.</li>
 </ol>
