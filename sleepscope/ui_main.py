@@ -10,6 +10,7 @@ from .ui_ask import AskView
 from .ui_landscape import LandscapeView
 from .ui_notes import NotesView
 from .ui_help import HelpView
+from .ui_home import HomeView
 
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
 
@@ -261,6 +262,7 @@ class MainWindow(QtWidgets.QMainWindow):
         left.setMinimumWidth(440); split.addWidget(left)
 
         self.tabs = QtWidgets.QTabWidget(); split.addWidget(self.tabs); split.setSizes([470, 1030])
+        self.home = HomeView(); self.home.action.connect(self._home_action); self.tabs.addTab(self.home, 'Start here')
         self.tabs.addTab(HelpView(), 'How to use')
         self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(self.overview, 'Overview')
         self.synopsis = SynopsisView(); self.tabs.addTab(self.synopsis, 'Synopsis')
@@ -281,6 +283,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dl.addWidget(self.dev_text); self.str_table = Table(['Day']); dl.addWidget(self.str_table); self.tabs.addTab(dev, 'Device and settings')
         meth = QtWidgets.QTextBrowser(); meth.setHtml(METHODS); self.tabs.addTab(meth, 'Methods')
         self.tabs.currentChanged.connect(self._tab_changed)
+        self._refresh_home()
         last = SETTINGS.value('root', '')
         if last and os.path.isdir(last):
             QtCore.QTimer.singleShot(200, lambda: self.load(last))
@@ -299,7 +302,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self.landscape, 'gl'):
             for it in self.landscape.items: self.landscape.gl.removeItem(it)
             self.landscape.items = []
-        self.tabs.setCurrentIndex(0); self.statusBar().showMessage('Data closed. Open an SD card or load the sample data.')
+        self._refresh_home(); self.tabs.setCurrentIndex(0); self.statusBar().showMessage('Data closed. Open an SD card or load the sample data.')
     def load_sample(self):
         from . import sample_data
         base = os.path.join(os.environ.get('LOCALAPPDATA') or os.path.expanduser('~'), 'SleepScope', 'sample_card')
@@ -324,7 +327,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ident = data.get('identification') or {}
         self.device_label.setText(f"{ident.get('model', 'Unknown device')}  SN {ident.get('serial', '?')}\n{data['datalog']}")
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
-        self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights)
+        self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
         if self.nights: self.select_night(len(self.nights) - 1); self.tabs.setCurrentWidget(self.synopsis)
         if not self.nights: QtWidgets.QMessageBox.information(self, 'No data', 'No sessions of 5 minutes or longer were found under that folder.')
 
@@ -361,7 +364,18 @@ class MainWindow(QtWidgets.QMainWindow):
         nt = self.nights[rows[0].row()]; self.current = nt
         self.night_view.set_night(nt); self.breaths.set_night(nt); self._fill_events()
         if self.tabs.currentIndex() == 0: self.tabs.setCurrentIndex(1)
+    def _home_action(self, a):
+        if a == 'open': self.open_card()
+        elif a == 'synopsis': self.tabs.setCurrentWidget(self.synopsis)
+        elif a == 'landscape': self.tabs.setCurrentWidget(self.landscape)
+        elif a == 'ask': self.tabs.setCurrentWidget(self.ask); self.ask.key.setFocus()
+        elif a == 'oximeter': self.import_oximeter()
+        elif a == 'apple': self.import_apple()
+    def _refresh_home(self):
+        ox = any(s.has_oximetry for n in self.nights for s in n.sessions); ap = any(getattr(n, 'apple', None) for n in self.nights)
+        self.home.update_status(self.nights, SETTINGS.value('api_key', ''), ox, ap)
     def _tab_changed(self, i):
+        if self.tabs.widget(i) is getattr(self, 'home', None): self._refresh_home()
         if self.tabs.widget(i) is getattr(self, 'notes', None): self.notes.refresh()
     def _continue_conversation(self, pairs):
         self.ask.load_history(pairs); self.tabs.setCurrentWidget(self.ask)
@@ -394,7 +408,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not p: return
         n = loader.import_oximeter_csv(p, self.nights)
         for nt in self.nights: scoring.night_stats(nt)
-        self._fill_stats(); self.overview.set_nights(self.nights); self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights)
+        self._fill_stats(); self.overview.set_nights(self.nights); self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights); self._refresh_home()
         QtWidgets.QMessageBox.information(self, 'Oximeter import', f'SpO2 and pulse attached to {n} session(s) by timestamp.')
     def import_apple(self):
         if not self.nights: return
@@ -406,7 +420,7 @@ class MainWindow(QtWidgets.QMainWindow):
             n = apple_health.attach(data, self.nights)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, 'Apple Health import', str(e)); return
-        self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights)
+        self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights); self._refresh_home()
         QtWidgets.QMessageBox.information(self, 'Apple Health import', f'{len(data["sleep"]):,} sleep records, {len(data["hr"]):,} heart rate samples, {len(data["spo2"]):,} SpO2 samples read.\nMatched to {n} of {len(self.nights)} nights.')
     def export_table(self, table, default):
         p, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save CSV', default, 'CSV (*.csv)')

@@ -19,7 +19,8 @@ Windows SmartScreen will warn the first time because the exe is not code-signed:
 Ready-made downloads: https://github.com/robertb-design/sleepscope/releases (built automatically by GitHub on every update).
 
 ## Tabs
-- **How to use** a guide for new users: loading the card, what each tab is for, the numbers in plain words, oximeter, Apple Health, Ask Claude setup, updating, troubleshooting.
+- **Start here** a home screen with six numbered, colour coded step cards (get data in, read the synopsis, see the picture, connect Claude, add an oximeter, add Apple Health) that show what is done and open the right place.
+- **How to use** the full step by step setup: what you need (card reader), installing, getting the card into the PC, opening it, reading results, Claude API key, oximeter, Apple Health, routine, the numbers in plain words, troubleshooting.
 - **Overview** usage, AHI (machine vs app), event mix, pressure band, leak, flow limitation, breathing, SpO2 when present. Click a bar to open the night.
 - **Night** stacked panels, all time linked: flow (25 Hz), pressure (set, mask, EPR), leak, flow limitation and snore, ventilation ratio,
   RR, tidal volume, minute ventilation, SpO2 and pulse. Drag the top strip or use the zoom buttons. Mouse wheel zooms, drag pans.
