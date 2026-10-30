@@ -6,6 +6,9 @@ HELP = """
 narrowed or closed, how the machine responded, whether the mask leaked, and, with an oximeter or Apple Watch, what it did to your oxygen and heart rate.
 Nothing leaves this PC unless you use the Ask Claude tab.</p>
 
+<h2>0. Try it first</h2>
+<p>Click <b>Load sample data</b> on the toolbar. It generates seven nights of made-up data for an imaginary patient in the machine's own file format, so every tab has something to show. Nothing about a real person is in it. When you are ready, open your own card.</p>
+
 <h2>1. Load the card</h2>
 <ol>
 <li>Take the SD card out of the machine (the slot on the side; the machine keeps working without it) and put it in the PC.</li>

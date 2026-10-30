@@ -17,7 +17,7 @@ C_ERR = '#e34948'
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
 
 SYSTEM = """You are a sleep-therapy data analyst helping the owner of a ResMed AirSense 11 AutoSet understand his own CPAP data.
-The user is Robert, 71, self-taught engineer, runs a manufacturing company; he wants plain, direct, well-reasoned answers and no filler.
+Give plain, direct, well-reasoned answers with no filler. If the user has written an About me note, use it to pitch the answer.
 You have the app's computed results for the selected date range in the CONTEXT block. Use those numbers; do not invent data.
 When a question needs something not in the context, say so and name what would answer it (an oximeter, STR.edf, a longer range, the prescriber).
 Be clear about what is established physiology versus your inference. Pressure settings are prescribed: discuss trade-offs and what to raise
@@ -116,6 +116,10 @@ class AskView(QtWidgets.QWidget):
         self.card_btn = QtWidgets.QPushButton('Use SD card'); self.card_btn.setToolTip('Save into a SleepScope_Notes folder on the card. The machine ignores folders it does not know, but keep the card clean if ResMed support ever asks for it.')
         self.card_btn.clicked.connect(self.use_card); row2.addWidget(self.card_btn)
         sv = QtWidgets.QPushButton('Save conversation…'); sv.clicked.connect(self.save_conversation); row2.addWidget(sv)
+        row3 = QtWidgets.QHBoxLayout(); lay.addLayout(row3)
+        row3.addWidget(QtWidgets.QLabel('About me (optional, sent with each question, stored on this PC only)'))
+        self.about = QtWidgets.QLineEdit(SETTINGS.value('about_me', '')); self.about.setPlaceholderText('e.g. 71, engineer, diagnosed 2024, diagnostic AHI 35, want direct answers')
+        self.about.editingFinished.connect(lambda: SETTINGS.setValue('about_me', self.about.text().strip())); row3.addWidget(self.about, 1)
         row2.addWidget(QtWidgets.QLabel('Earlier:')); self.earlier = QtWidgets.QComboBox(); self.earlier.setMinimumWidth(260)
         self.earlier.activated.connect(self._pick_earlier); row2.addWidget(self.earlier)
         op = QtWidgets.QPushButton('Open folder'); op.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(self._ensure_folder() or '.'))); row2.addWidget(op)
@@ -264,7 +268,8 @@ class AskView(QtWidgets.QWidget):
         if self._t0: self.status.setText(f'Waiting for Claude... {int((dt.datetime.now() - self._t0).total_seconds())} s  (a long answer can take 30 to 60 s)')
     def _start_worker(self, messages, msg):
         self._t0 = dt.datetime.now(); self.timer.start(); self.send.setEnabled(False); self.status.setText(msg)
-        self.worker = AskWorker(self.key.text().strip(), self.model.text().strip() or DEFAULT_MODEL, SYSTEM, messages)
+        sysmsg = SYSTEM + (f'\nAbout the user, in their words: {self.about.text().strip()}\n' if self.about.text().strip() else '')
+        self.worker = AskWorker(self.key.text().strip(), self.model.text().strip() or DEFAULT_MODEL, sysmsg, messages)
         self.worker.done.connect(self._answer); self.worker.failed.connect(self._fail); self.worker.start()
     def test_connection(self):
         if not self.key.text().strip(): self.status.setText('Enter an API key first.'); return

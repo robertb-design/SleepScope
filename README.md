@@ -3,6 +3,9 @@
 Desktop analysis for ResMed AirSense 10 / 11 SD card data. Reads the raw EDF files, re-scores events from the 25 Hz flow
 signal, and shows the machine's scoring next to its own.
 
+## Try it without a card
+**Load sample data** on the toolbar generates seven nights for an imaginary patient in ResMed's file format (synthetic, no real person).
+
 ## Install (Windows)
 1. Unzip this folder somewhere permanent (for example `C:\SleepScope`).
 2. Double-click `install.bat`. It installs Python from python.org if missing, sets up a private environment, checks it, and puts a shortcut on the desktop. It writes `install_log.txt` next to itself; if anything fails, that file says why.

@@ -247,7 +247,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__(); self.setWindowTitle('SleepScope'); self.resize(1500, 950)
         self.data = None; self.nights = []
         tb = self.addToolBar('Main'); tb.setMovable(False); tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        tb.addAction('Open SD card…', self.open_card); tb.addAction('Reload', self.reload)
+        tb.addAction('Open SD card…', self.open_card); tb.addAction('Reload', self.reload); tb.addAction('Load sample data', self.load_sample)
         tb.addAction('Import oximeter CSV…', self.import_oximeter); tb.addAction('Import Apple Health export…', self.import_apple); tb.addSeparator()
         tb.addAction('Export statistics CSV', lambda: self.export_table(self.stats_table, 'sleepscope_nights.csv'))
         tb.addAction('Export events CSV', self.export_events); tb.addAction('Save chart as PNG', self.save_png)
@@ -286,12 +286,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if last and os.path.isdir(last):
             QtCore.QTimer.singleShot(200, lambda: self.load(last))
         else:
-            self.statusBar().showMessage('Open the SD card (the card root or its DATALOG folder).')
+            self.statusBar().showMessage('Open the SD card (the card root or its DATALOG folder), or click Load sample data to try the app with made-up data.')
 
     # ------------------------------------------------------------------ loading
     def open_card(self):
         d = QtWidgets.QFileDialog.getExistingDirectory(self, 'Select the SD card root or DATALOG folder', SETTINGS.value('root', ''))
         if d: self.load(d)
+    def load_sample(self):
+        from . import sample_data
+        base = os.path.join(os.environ.get('LOCALAPPDATA') or os.path.expanduser('~'), 'SleepScope', 'sample_card')
+        if not os.path.isdir(os.path.join(base, 'DATALOG')):
+            self.statusBar().showMessage('Generating a synthetic sample card (seven nights, made-up patient)...'); QtWidgets.QApplication.processEvents()
+            try: sample_data.write_card(base)
+            except Exception as e: QtWidgets.QMessageBox.critical(self, 'Sample data', str(e)); return
+        self.load(base)
     def reload(self):
         if self.data: self.load(self.data['root'])
     def load(self, root):
