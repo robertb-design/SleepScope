@@ -9,7 +9,7 @@ const SS = (() => {
     const [H, M, S] = t.split('.').map(Number);
     return { start: new Date(yy, mm - 1, dd, H, M, S), hdr: +txt(u8, 184, 192), nrec: +txt(u8, 236, 244), recdur: +txt(u8, 244, 252), nsig: +txt(u8, 252, 256) };
   }
-  function readEdf(buf) {
+  function readEdf(buf, keepLabels) {
     const u8 = new Uint8Array(buf); const h = parseHeader(u8); const ns = h.nsig; let o = 256;
     const f = (len) => { const out = []; for (let i = 0; i < ns; i++) { out.push(txt(u8, o, o + len)); o += len; } return out; };
     const labels = f(16); f(80); const dims = f(8); const pmin = f(8).map(Number), pmax = f(8).map(Number), dmin = f(8).map(Number), dmax = f(8).map(Number); f(80); const spr = f(8).map(Number); f(32);
@@ -20,7 +20,7 @@ const SS = (() => {
       let pre = 0; for (let k = 0; k < s; k++) pre += spr[k] * 2;
       let i = 0;
       for (let r = 0; r < h.nrec; r++) { let p = h.hdr + r * recBytes + pre; for (let k = 0; k < spr[s]; k++, p += 2) arr[i++] = dv.getInt16(p, true) * gain + off; }
-      sigs[labels[s].split('.')[0]] = { data: arr, fs: spr[s] / h.recdur, dim: dims[s] };
+      sigs[keepLabels ? labels[s] : labels[s].split('.')[0]] = { data: arr, fs: spr[s] / h.recdur, dim: dims[s] };
     }
     return { ...h, duration: h.nrec * h.recdur, sigs };
   }
@@ -198,7 +198,35 @@ const SS = (() => {
     }
     return filled;
   }
+  function readStr(buf) {
+    try { const e = readEdf(buf, true); const days = []; for (let i = 0; i < e.nrec; i++) { const d = new Date(e.start.getTime() + i * 86400e3); days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); }
+      const signals = {}; for (const k in e.sigs) { const sg = e.sigs[k]; const per = Math.max(1, Math.round(sg.data.length / e.nrec)); const v = []; for (let i = 0; i < e.nrec; i++) v.push(sg.data[i * per]); signals[k] = v; } return { days, signals }; } catch (err) { return null; }
+  }
+  function settingsSummary(nights, str) {
+    const fin = Number.isFinite; const out = {};
+    if (nights.length) { const mins = nights.map(n => n.stats.press_min).filter(fin), maxs = nights.map(n => n.stats.press_max).filter(fin); out.press_min = mins.length ? Math.min(...mins) : NaN; out.press_max = maxs.length ? Math.max(...maxs) : NaN; out.mode = [...new Set(nights.map(n => n.stats.mode))].sort().join('/'); const e = nights.map(n => n.stats.epr).filter(fin).sort((a, b) => a - b); out.epr = e.length ? e[e.length >> 1] : NaN; }
+    out.str_found = false;
+    if (str && str.signals && nights.length) {
+      const find = (...pats) => Object.keys(str.signals).find(l => pats.some(p => p.test(l))); const idx = nights.map(n => str.days.indexOf(n.date)).filter(i => i >= 0);
+      const val = (lab) => { if (!lab || !idx.length) return null; const v = idx.map(i => str.signals[lab][i]).filter(x => fin(x) && x >= 0); return v.length ? [Math.min(...v), Math.max(...v)] : null; };
+      out.hum_on = val(find(/HumEnable/i, /Hum.*Enab/i)); out.hum = val(find(/HumLevel/i, /Humid.*Level/i, /^S\.Hum$/)); out.temp_on = val(find(/TempEnable/i, /Temp.*Enab/i)); out.temp = val(find(/S\.Temp$/, /TubeTemp/i, /Temp$/)); out.climate = val(find(/ClimateControl/i, /Climate/i));
+      out.set_min = val(find(/MinPress/i)); out.set_max = val(find(/MaxPress/i)); out.set_cpap = val(find(/S\.C\.Press/, /C\.Press/, /CPAP.*Press/i)); out.str_found = true;
+    }
+    return out;
+  }
+  function settingsText(sm) {
+    const rng = (v) => v ? (Math.abs(v[0] - v[1]) < 1e-6 ? `${+v[0].toFixed(1)}` : `${+v[0].toFixed(1)} to ${+v[1].toFixed(1)}`) : null; const b = (t) => `<b>${t}</b>`; const parts = []; const fin = Number.isFinite;
+    if (sm.set_min && sm.set_max && sm.set_max[1] > 0 && sm.set_min[1] !== sm.set_max[1]) parts.push(`Pressure set ${b('low ' + rng(sm.set_min) + ', high ' + rng(sm.set_max) + ' cmH2O')} (AutoSet)`);
+    else if (sm.set_cpap && sm.set_cpap[1] > 0 && (sm.mode || '').startsWith('CPAP')) parts.push(`Pressure set ${b(rng(sm.set_cpap) + ' cmH2O')} (CPAP)`);
+    else if (fin(sm.press_min)) parts.push(sm.mode === 'CPAP' ? `Pressure ${b('fixed ' + sm.press_max.toFixed(0) + ' cmH2O')} (ramp from ${sm.press_min.toFixed(0)}, from the trace)` : `Pressure ${b('low ' + sm.press_min.toFixed(0) + ', high ' + sm.press_max.toFixed(0) + ' cmH2O')} (${sm.mode}, from the trace)`);
+    if (fin(sm.epr) && sm.epr > 0) parts.push(`EPR ${b(sm.epr.toFixed(0))}`);
+    if (sm.str_found) {
+      if (sm.hum_on && sm.hum_on[1] === 0) parts.push(`Humidifier ${b('off')}`); else if (sm.hum) parts.push(`Humidity ${b(rng(sm.hum))}` + (sm.climate && sm.climate[1] > 0 ? ' (Climate Control auto)' : '')); else parts.push('Humidity: not in this STR file');
+      if (sm.temp_on && sm.temp_on[1] === 0) parts.push(`Tube heat ${b('off')}`); else if (sm.temp) parts.push(`Tube temp ${b(rng(sm.temp) + (sm.temp[1] > 45 ? ' °F' : ' °C'))}`); else parts.push('Tube temp: not in this STR file');
+    } else parts.push('Humidity and tube temp: include STR.edf from the card root in the zip to see them');
+    return parts.join(' &nbsp;·&nbsp; ');
+  }
   function validation(nights) { let total = 0, hit = 0; for (const nt of nights) for (const s of nt.sessions) for (const m of s.machine) { if (!/Apnea/.test(m.label)) continue; total++; if (s.app.some(e => /Apnea/.test(e.label) && e.start >= new Date(m.start.getTime() - 15000) && m.start <= new Date(e.start.getTime() + e.dur * 1000 + 5000))) hit++; } return [total, hit]; }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

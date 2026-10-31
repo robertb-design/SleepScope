@@ -193,7 +193,7 @@ class SynopsisView(QtWidgets.QWidget):
         self.claude_text = QtWidgets.QTextBrowser(); self.claude_text.setOpenExternalLinks(True); self.claude_text.setStyleSheet('font-size:13px; padding:8px'); rl.addWidget(self.claude_text)
         self.claude_status = QtWidgets.QLabel(''); self.claude_status.setStyleSheet('color:#52514e; padding:2px 4px'); rl.addWidget(self.claude_status)
         split.addWidget(left); split.addWidget(right); split.setSizes([600, 600])
-        self.worker = None; self._claude_key = None
+        self.worker = None; self._claude_key = None; self.on_range = None
         self.claude_text.setHtml('<p style="color:#52514e">Claude reads the statistics, events and the rule based synopsis for the selected range and writes its own account: what the data shows, what it means for you, and what to ask the prescriber. It runs by itself when data loads if an API key is saved on the Ask Claude tab (a few cents per run; the same data is not sent twice).</p>')
         self.d0.dateChanged.connect(self.generate); self.d1.dateChanged.connect(self.generate); self.diag.valueChanged.connect(self.generate)
     def set_nights(self, nights):
@@ -211,6 +211,7 @@ class SynopsisView(QtWidgets.QWidget):
         a = self.d0.date().toPython(); b = self.d1.date().toPython()
         if a > b: a, b = b, a
         self.html = synopsis.generate(self.nights, a, b, self.diag.value() or None); self.text.setHtml(self.html)
+        if self.on_range: self.on_range(a, b)
         if self.auto.isChecked(): self.ask_claude(force=False)
     # ---- Claude narrative
     def ask_claude(self, force=False):
@@ -325,7 +326,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'), 'How to use')
         self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(Page(self.overview, 'Overview', 'Trends across nights. Click a bar to open that night.', '#2a78d6'), 'Overview')
         self.synopsis = SynopsisView(); self.tabs.addTab(Page(self.synopsis, 'Synopsis', 'Plain English report for any date range, with Claude\'s reading beside it.', '#1baf7a'), 'Synopsis')
-        self.landscape = LandscapeView(); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed; the key on the right explains the rest.', '#6250d6'), '3D Landscape')
+        self.landscape = LandscapeView(); self.synopsis.on_range = lambda a, b: self.landscape.set_range(a, b); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed; the key on the right explains the rest.', '#6250d6'), '3D Landscape')
         self.ask = AskView(); self.tabs.addTab(Page(self.ask, 'Ask Claude', 'Questions about your results, answered from your numbers and saved for later.', '#eb6834'), 'Ask Claude')
         self.notes = NotesView(); self.tabs.addTab(Page(self.notes, 'Saved answers', 'Everything Claude has written for you, searchable.', '#d95926'), 'Saved answers')
         self.notes.continue_requested.connect(self._continue_conversation)
@@ -386,8 +387,9 @@ class MainWindow(QtWidgets.QMainWindow):
         ident = data.get('identification') or {}
         self.device_label.setText(f"{ident.get('model', 'Unknown device')}  SN {ident.get('serial', '?')}\n{data['datalog']}")
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
+        self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
         self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
-        if self.nights: self.select_night(len(self.nights) - 1); self.tabs.setCurrentWidget(self.synopsis)
+        if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self.tabs.setCurrentWidget(self.synopsis)
         if not self.nights: QtWidgets.QMessageBox.information(self, 'No data', 'No sessions of 5 minutes or longer were found under that folder.')
 
     def _fill_nights(self):
@@ -421,7 +423,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = self.night_table.selectionModel().selectedRows()
         if not rows: return
         nt = self.nights[rows[0].row()]; self.current = nt
-        self.night_view.set_night(nt); self.breaths.set_night(nt); self._fill_events()
+        self.night_view.set_night(nt); self.breaths.set_night(nt); self._fill_events(); self.landscape.set_selected(nt)
         if self.tabs.currentIndex() == 0: self.tabs.setCurrentIndex(1)
     def _home_action(self, a):
         if a == 'open': self.open_card()

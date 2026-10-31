@@ -70,10 +70,15 @@ class LandscapeView(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(4, 4, 4, 4)
         bar = QtWidgets.QHBoxLayout(); lay.addLayout(bar)
         self.caption = QtWidgets.QLabel(''); self.caption.setStyleSheet('font-weight:600'); bar.addWidget(self.caption); bar.addStretch()
+        self.str_data = None
+        self.highlight = QtWidgets.QLabel(''); self.highlight.setWordWrap(True); self.highlight.setTextFormat(QtCore.Qt.RichText)
+        self.highlight.setStyleSheet('background:#fff4d6; border:1px solid #eda100; border-left:6px solid #eda100; border-radius:8px; padding:8px 12px; font-size:13px; color:#0b0b0b')
+        lay.addWidget(self.highlight)
         for lab, fn in (('Overview', self.view_overview), ('Fly along', self.view_along), ('Top down', self.view_top), ('Side', self.view_side)):
             b = QtWidgets.QPushButton(lab); b.clicked.connect(fn); bar.addWidget(b)
-        self.nmax = QtWidgets.QSpinBox(); self.nmax.setRange(3, 120); self.nmax.setValue(30); self.nmax.setPrefix('last '); self.nmax.setSuffix(' nights')
-        self.nmax.valueChanged.connect(lambda _: self.rebuild()); bar.addWidget(self.nmax)
+        self.mode = QtWidgets.QComboBox(); self.mode.addItems(['Synopsis range', 'Selected night', 'Last 30 nights']); self.mode.setToolTip('Which nights to draw')
+        self.mode.currentIndexChanged.connect(lambda _: self.rebuild()); bar.addWidget(self.mode)
+        self.range = None; self.selected = None
         if not HAVE_GL:
             lay.addWidget(QtWidgets.QLabel('3D view needs the PyOpenGL package. Close the app and run SleepScope.bat again (it installs missing packages), or run install.bat.'))
             return
@@ -84,6 +89,14 @@ class LandscapeView(QtWidgets.QWidget):
 
     def set_nights(self, nights):
         self.nights = nights; self.rebuild()
+    def set_range(self, a, b):
+        self.range = (a, b)
+        if self.mode.currentIndex() == 1: self.mode.blockSignals(True); self.mode.setCurrentIndex(0); self.mode.blockSignals(False)
+        if self.nights: self.rebuild()
+    def set_selected(self, night):
+        self.selected = night
+        if night is not None: self.mode.blockSignals(True); self.mode.setCurrentIndex(1); self.mode.blockSignals(False)
+        if self.nights: self.rebuild()
 
     def rebuild(self):
         if not HAVE_GL or not self.nights: return
@@ -91,7 +104,11 @@ class LandscapeView(QtWidgets.QWidget):
             try: self.gl.removeItem(it)
             except Exception: pass
         self.items = []
-        nights = self.nights[-self.nmax.value():][::-1]      # newest first = front (y = 0)
+        m = self.mode.currentIndex()
+        if m == 1 and self.selected is not None: nights = [self.selected]
+        elif m == 0 and self.range: nights = [n for n in self.nights if self.range[0] <= n.date <= self.range[1]] or self.nights[-14:]
+        else: nights = self.nights[-30:]
+        nights = nights[::-1]      # newest first = front (y = 0)
         N = len(nights); W = NBIN
         xs = np.arange(W, dtype=float) * 0.25                   # 2 min bin = 0.25 units  (12 h = 105 units)
         ys = np.arange(N, dtype=float) * 7.0                    # strip spacing
@@ -190,7 +207,9 @@ class LandscapeView(QtWidgets.QWidget):
         grid.setColor((200, 200, 195, 90)); self.gl.addItem(grid); self.items.append(grid)
         self.center = QtGui.QVector3D(xs[-1] / 2, ys[-1] / 2, 0)
         self.extent = max(xs[-1], ys[-1] + 10)
-        self.caption.setText(f'{N} nights, evening on the left, morning on the right, newest strip at the front')
+        self.caption.setText((f'{nights[0].date.strftime("%A %B %d")}' if N == 1 else f'{N} nights, {nights[-1].label} to {nights[0].label}') + '. Evening on the left, morning on the right, newest strip at the front.')
+        from . import scoring as _sc
+        self.highlight.setText('<b>SETTINGS</b> &nbsp; ' + _sc.settings_text(_sc.settings_summary(nights, self.str_data)))
         self.view_overview()
 
     def view_overview(self):

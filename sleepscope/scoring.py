@@ -301,3 +301,65 @@ def fmt(key, val):
     if val is None or (isinstance(val, float) and np.isnan(val)): return ''
     try: return (_FMT.get(key) or '{}').format(val)
     except Exception: return str(val)
+
+
+# ----------------------------------------------------------------------------- settings highlight
+import re as _re
+def settings_summary(nights, str_data=None):
+    """Hi/low pressure, mode, EPR, and humidifier/tube settings for a set of nights.
+    Pressure comes from the trace (verified). Humidity and temperature come from STR.edf when loaded; the STR signal names
+    are matched loosely (HumLevel, Temp, ClimateControl, HumEnable, TempEnable) because they vary by firmware."""
+    out = {}
+    if nights:
+        pmin = min(n.stats['press_min'] for n in nights if np.isfinite(n.stats.get('press_min', np.nan)) or False) if any(np.isfinite(n.stats.get('press_min', np.nan)) for n in nights) else np.nan
+        pmax = max(n.stats['press_max'] for n in nights if np.isfinite(n.stats.get('press_max', np.nan))) if any(np.isfinite(n.stats.get('press_max', np.nan)) for n in nights) else np.nan
+        modes = {n.stats['mode'] for n in nights}
+        out.update(press_min=pmin, press_max=pmax, mode='/'.join(sorted(modes)), epr=float(np.nanmedian([n.stats.get('epr', np.nan) for n in nights])) if nights else np.nan,
+                   press_95=float(np.nanmean([n.stats.get('press_95', np.nan) for n in nights])))
+    if str_data and 'signals' in str_data and nights:
+        sig = str_data['signals']; days = str_data['days']
+        def find(*pats):
+            for lab in sig:
+                if any(_re.search(p, lab, _re.I) for p in pats): return lab
+            return None
+        idx = [days.index(n.date) for n in nights if n.date in days]
+        def val(lab):
+            if not lab or not idx: return None
+            v = [sig[lab][i] for i in idx if i < len(sig[lab])]
+            v = [x for x in v if np.isfinite(x) and x >= 0]
+            return (min(v), max(v)) if v else None
+        hum_on = val(find(r'HumEnable', r'Hum.*Enab')); hum = val(find(r'HumLevel', r'Humid.*Level', r'^S\.Hum$'))
+        temp_on = val(find(r'TempEnable', r'Temp.*Enab')); temp = val(find(r'S\.Temp$', r'TubeTemp', r'Temp$'))
+        cc = val(find(r'ClimateControl', r'Climate')); smin = val(find(r'MinPress')); smax = val(find(r'MaxPress')); cpap = val(find(r'S\.C\.Press', r'C\.Press', r'CPAP.*Press'))
+        out.update(hum=hum, hum_on=hum_on, temp=temp, temp_on=temp_on, climate=cc, set_min=smin, set_max=smax, set_cpap=cpap, str_found=True)
+    else:
+        out['str_found'] = False
+    return out
+
+
+def settings_text(sm, html=True):
+    def rng(v, fmt='{:g}'):
+        if v is None: return None
+        a, b = v; return fmt.format(a) if abs(a - b) < 1e-6 else f"{fmt.format(a)} to {fmt.format(b)}"
+    b = (lambda t: f'<b>{t}</b>') if html else (lambda t: t)
+    parts = []
+    if sm.get('set_min') and sm.get('set_max') and sm['set_max'][1] > 0 and (sm.get('set_min')[1] != sm.get('set_max')[1]):
+        parts.append(f"Pressure set {b('low ' + rng(sm['set_min']) + ', high ' + rng(sm['set_max']) + ' cmH2O')} (AutoSet)")
+    elif sm.get('set_cpap') and sm['set_cpap'][1] > 0 and sm.get('mode', '').startswith('CPAP'):
+        parts.append(f"Pressure set {b(rng(sm['set_cpap']) + ' cmH2O')} (CPAP)")
+    elif np.isfinite(sm.get('press_min', np.nan)):
+        if sm.get('mode') == 'CPAP': parts.append('Pressure ' + b(f"fixed {sm['press_max']:.0f} cmH2O") + f" (ramp from {sm['press_min']:.0f}, from the trace)")
+        else: parts.append('Pressure ' + b(f"low {sm['press_min']:.0f}, high {sm['press_max']:.0f} cmH2O") + f" ({sm.get('mode', '')}, from the trace)")
+    if np.isfinite(sm.get('epr', np.nan)) and sm['epr'] > 0: parts.append(f"EPR {b(f'{sm["epr"]:.0f}')}")
+    if sm.get('str_found'):
+        if sm.get('hum_on') and sm['hum_on'][1] == 0: parts.append(f"Humidifier {b('off')}")
+        elif sm.get('hum') is not None: parts.append(f"Humidity {b(rng(sm['hum']))}" + (' (Climate Control auto)' if sm.get('climate') and sm['climate'][1] > 0 else ''))
+        else: parts.append('Humidity: not in this STR file')
+        if sm.get('temp_on') and sm['temp_on'][1] == 0: parts.append(f"Tube heat {b('off')}")
+        elif sm.get('temp') is not None:
+            lo, hi = sm['temp']; unit = '°F' if hi > 45 else '°C'
+            parts.append(f"Tube temp {b(rng(sm['temp']) + ' ' + unit)}")
+        else: parts.append('Tube temp: not in this STR file')
+    else:
+        parts.append('Humidity and tube temp: open the card root (STR.edf) to see them')
+    return '   ·   '.join(parts)

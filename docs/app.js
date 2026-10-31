@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const C = { blue: '#2a78d6', green: '#1baf7a', violet: '#6250d6', orange: '#eb6834', red: '#e34948', amber: '#eda100', grey: '#8a8985', aqua: '#1baf7a' };
 const EVC = { 'Obstructive Apnea': C.red, 'Central Apnea': C.violet, 'Hypopnea': C.orange, 'Arousal': C.amber, 'Unclassified Apnea': C.grey, 'Apnea (unflagged by machine)': C.red, 'Flow Limitation Run': C.violet, 'Large Leak': C.orange };
-let nights = []; let history = []; let claudeBusy = false;
+let nights = []; let history = []; let claudeBusy = false; let selectedNight = null; let strData = null;
 const store = { get: (k, d) => { try { const v = localStorage.getItem('ss_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem('ss_' + k, JSON.stringify(v)); } catch (e) {} } };
 
 // ---------------------------------------------------------------- navigation
@@ -26,9 +26,10 @@ async function filesFromInputs(list) {
   return files;
 }
 function normalise(files) { // flatten to folder/name keyed by the date folder where possible
-  const out = {}; for (const [k, v] of Object.entries(files)) { const parts = k.split('/'); const name = parts.pop(); const folder = parts.length ? parts.pop() : (name.match(/^(\d{8})_/) || [, 'x'])[1]; out[folder + '/' + name] = v; } return out;
+  const out = {}; for (const [k, v] of Object.entries(files)) { const parts = k.split('/'); const name = parts.pop(); if (/^STR\.edf$/i.test(name)) { out['STR.edf'] = v; continue; } const folder = parts.length ? parts.pop() : (name.match(/^(\d{8})_/) || [, 'x'])[1]; out[folder + '/' + name] = v; } return out;
 }
 async function loadFiles(files, label) {
+  const strKey = Object.keys(files).find(k => /(^|\/)STR\.edf$/i.test(k)); strData = strKey ? SS.readStr(files[strKey]) : null;
   const prog = $('progress'); prog.style.display = 'block'; const bar = prog.firstElementChild; $('loadmsg').textContent = 'Reading ' + label + '…';
   const t0 = Date.now();
   nights = await SS.buildSessions(files, (i, n, name) => { bar.style.width = (100 * i / Math.max(n, 1)) + '%'; $('loadmsg').textContent = `Reading ${name} (${i + 1}/${n})`; });
@@ -74,6 +75,8 @@ function renderSynopsis() {
   if (!nights.length) return; let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a];
   const diag = parseFloat($('diag').value) || null; store.set('diag', diag);
   $('syntext').innerHTML = SS.synopsis(nights, a, b, diag) + appleSection(a, b);
+  if ($('landmode').value === 'night') $('landmode').value = 'range';
+  if ($('p-land').classList.contains('active')) drawLandscape();
   claudeSynopsis(false);
 }
 ['d0', 'd1', 'diag'].forEach(id => $(id).onchange = renderSynopsis);
@@ -102,10 +105,10 @@ function fillNightTable() {
   nights.forEach((n, i) => { const s = n.stats; const tr = document.createElement('tr'); tr.innerHTML = `<td>${SS.label(n.date)}</td><td>${n.hours.toFixed(2)}</td><td>${s.mode}</td><td>${s.AHI.toFixed(2)}</td><td>${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(1) : ''}</td><td>${Number.isFinite(s.press_95) ? s.press_95.toFixed(1) : ''}</td>`; tr.onclick = () => showNight(i); tb.appendChild(tr); });
 }
 function showNight(i) {
-  const n = nights[i]; const s = n.stats; document.querySelectorAll('#nighttbl tbody tr').forEach((tr, k) => tr.classList.toggle('sel', k === i));
+  const n = nights[i]; const s = n.stats; selectedNight = n; $('landmode').value = 'night'; document.querySelectorAll('#nighttbl tbody tr').forEach((tr, k) => tr.classList.toggle('sel', k === i));
   const box = $('nightdetail'); box.innerHTML = `<div class="card"><h3 style="margin:0 0 6px">${new Date(n.date + 'T12:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3>
-    <div class="row" style="gap:6px"><span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span><span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span><span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}</div>
-    <p class="muted" style="margin:8px 0 0">Sessions ${s.starts} to ${s.ends}. OA ${s.OA}, CA ${s.CA}, H ${s.H}, arousals ${s.arousals}. RR ${s.rr_med.toFixed(0)}, Vt ${s.tv_med.toFixed(0)} mL, MV ${s.mv_med.toFixed(1)}.</p></div>
+    <div class="row" style="gap:6px"><button style="--c:#6250d6;padding:4px 10px;font-size:12px" onclick="go('land')">View in 3D</button><span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span><span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span><span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}</div>
+    <div class="hl">SETTINGS &nbsp; ${SS.settingsText(SS.settingsSummary([n], strData))}</div><p class="muted" style="margin:8px 0 0">Sessions ${s.starts} to ${s.ends}. OA ${s.OA}, CA ${s.CA}, H ${s.H}, arousals ${s.arousals}. RR ${s.rr_med.toFixed(0)}, Vt ${s.tv_med.toFixed(0)} mL, MV ${s.mv_med.toFixed(1)}.</p></div>
     <div class="card"><div id="ch-night" style="width:100%;height:${520 + (Number.isFinite(s.spo2_mean) ? 100 : 0) + (n.apple && n.apple.stages.length ? 200 : 0)}px"></div><div class="key"><span><i style="background:${C.red}"></i>obstructive</span><span><i style="background:${C.violet}"></i>central</span><span><i style="background:${C.orange}"></i>hypopnea</span><span><i style="background:${C.amber}"></i>arousal</span><span>lighter bands = app events</span></div></div>
     <div class="card"><b>Events</b> <span class="muted">(tap one to see the airflow around it)</span><div id="evlist"></div></div><div class="card" id="zoomcard" style="display:none"><div id="ch-zoom" style="width:100%;height:240px"></div><div class="muted" id="zoomnote"></div></div>`;
   box.scrollIntoView({ behavior: 'smooth' });
@@ -162,7 +165,11 @@ function nightGrids(n) {
   return { op, lk, pr, base };
 }
 function drawLandscape() {
-  if (!nights.length) return; const N = Math.min(+$('landn').value, nights.length); const sel = nights.slice(-N).reverse(); const W = LB.n;
+  if (!nights.length) return; const mode = $('landmode').value; let sel;
+  if (mode === 'night' && selectedNight) sel = [selectedNight];
+  else if (mode === 'all') sel = nights.slice(-60);
+  else { let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a]; sel = nights.filter(n => n.date >= a && n.date <= b); if (!sel.length) sel = nights.slice(-14); }
+  sel = sel.slice().reverse(); const N = sel.length; const W = LB.n;
   const xs = Array.from({ length: W }, (_, i) => i * 0.25); const traces = []; const sw = 5, gap = 7;
   const scale = [[0, '#c9c8c3'], [0.165, '#c9c8c3'], [0.1667, '#e34948'], [0.5, '#eda100'], [1, '#1baf7a']]; // value -0.2 .. 1 : grey floor then red->yellow->green
   const pil = { 'Obstructive Apnea': { x: [], y: [], z: [], c: C.red }, 'Central Apnea': { x: [], y: [], z: [], c: C.violet }, 'Hypopnea': { x: [], y: [], z: [], c: C.orange } };
@@ -184,10 +191,11 @@ function drawLandscape() {
   });
   for (const [lab, g] of Object.entries(pil)) if (g.x.length) traces.push({ type: 'scatter3d', mode: 'lines+markers', x: g.x, y: g.y, z: g.z, line: { color: g.c, width: 6 }, marker: { color: g.c, size: g.sz }, name: lab, hoverinfo: 'name' });
   const ticks = []; for (let h = LB.t0; h <= LB.t1; h += 2) ticks.push(h);
-  const layout = { margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, paper_bgcolor: '#f6f5f2', scene: {
+  const layout = { margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, paper_bgcolor: '#f6f5f2', annotations: [{ text: N === 1 ? SS.label(sel[0].date) : `${N} nights, ${SS.label(sel[N - 1].date)} to ${SS.label(sel[0].date)}`, xref: 'paper', yref: 'paper', x: 0, y: 1, showarrow: false, font: { size: 12, color: '#52514e' } }], scene: {
       xaxis: { tickvals: ticks.map(h => (h - LB.t0) * 3600 / LB.bin * 0.25), ticktext: ticks.map(h => `${String(h % 24).padStart(2, '0')}:00`), title: { text: '' }, showbackground: false, showgrid: false, zeroline: false, showspikes: false },
       yaxis: { tickvals: sel.map((_, k) => k * gap), ticktext: sel.map(n => SS.label(n.date)), title: { text: '' }, showbackground: false, showgrid: false, zeroline: false, showspikes: false },
       zaxis: { visible: false, range: [-2, 2.6 * LB.Z], showspikes: false }, aspectmode: 'manual', aspectratio: { x: 2.2, y: Math.max(0.6, 0.11 * N), z: 0.45 }, camera: cams(N)[landCam], dragmode: 'orbit' } };
+  $('landhl').innerHTML = 'SETTINGS &nbsp; ' + SS.settingsText(SS.settingsSummary(sel, strData));
   Plotly.react('ch-land', traces, layout, { displayModeBar: false, responsive: true });
 }
 function cams(N) { const c = { x: 0, y: 0, z: 0 }; return { over: { eye: { x: -0.85, y: -1.75, z: 1.05 }, center: { x: 0, y: 0, z: 0.05 } }, along: { eye: { x: -1.9, y: -0.4, z: 0.35 }, center: { x: 0, y: 0, z: -0.1 } }, top: { eye: { x: 0, y: -0.01, z: 1.9 }, center: c } }; }

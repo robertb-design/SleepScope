@@ -50,6 +50,7 @@
   #progress { height:6px; background:#e6e5e2; border-radius:3px; overflow:hidden; margin:8px 0; display:none; } #progress > div { height:100%; width:0; background:var(--green); transition:width .2s; }
   details summary { cursor:pointer; font-weight:600; color:var(--blue-dark); }
   .evt { display:flex; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; } .evt .t { width:62px; color:var(--text2); } .evt .l { flex:1; }
+  .hl { background:#fff4d6; border:1px solid #eda100; border-left:6px solid #eda100; border-radius:8px; padding:8px 12px; font-size:13px; margin:8px 0; line-height:1.4; }
   .key { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12px; color:var(--text2); margin-top:6px; } .key i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
 </style>
 </head>
@@ -60,7 +61,7 @@
 <section class="page active" id="p-start">
   <div class="banner"><h2>Start here</h2><p>Your CPAP card, read on your phone. Four steps; the first two are enough to begin.</p><p id="startsum" style="margin-top:6px"></p></div>
   <div class="card step" style="--c:#2a78d6"><div class="badge">1</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Get your data in</h3><span class="status" id="st1">No data</span></div>
-    <p>Plug an SD reader into the phone, open the <b>Files</b> app, find the card, long-press the <b>DATALOG</b> folder and choose <b>Compress</b>. Then pick that zip here. You can also select the .edf files directly, or try the sample.</p>
+    <p>Plug an SD reader into the phone, open the <b>Files</b> app, find the card, select the <b>DATALOG</b> folder and the <b>STR.edf</b> file (tap Select, then both), choose <b>Compress</b>, and pick that zip here. DATALOG alone also works; STR.edf adds the humidity and temperature settings. You can also select the .edf files directly, or try the sample.</p>
     <div class="row"><label class="btn" style="text-align:center">Choose zip or files<input type="file" id="filein" accept=".zip,.edf,application/zip" multiple style="display:none"></label><button class="ghost" id="samplebtn">Load sample</button></div>
     <div id="progress"><div></div></div><div class="muted" id="loadmsg"></div></div></div>
   <div class="card step" style="--c:#1baf7a"><div class="badge">2</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Read the Synopsis</h3><span class="status" id="st2">Needs data</span></div><p>A plain English report for any date range: hours, event control, leak, pressure, oxygen, and what it means for you.</p><button style="--c:#1baf7a" onclick="go('syn')">Go to Synopsis</button></div></div>
@@ -106,8 +107,8 @@
 
 
 <section class="page" id="p-land">
-  <div class="banner" style="--c:#6250d6;--c2:#3d2f9b"><h2>3D Landscape</h2><p>A week as terrain. One finger rotates, two fingers zoom. Newest night at the front.</p></div>
-  <div class="card" style="padding:6px"><div class="row" style="padding:4px 6px"><button class="ghost" onclick="landView('over')">Overview</button><button class="ghost" onclick="landView('along')">Fly along</button><button class="ghost" onclick="landView('top')">Top down</button><select id="landn" onchange="drawLandscape()"><option value="7">last 7</option><option value="14" selected>last 14</option><option value="30">last 30</option><option value="60">last 60</option></select></div><div id="ch-land" style="width:100%;height:62vh"></div></div>
+  <div class="banner" style="--c:#6250d6;--c2:#3d2f9b"><h2>3D Landscape</h2><p>The nights in your Synopsis range as terrain, or the night you tapped in Nights. One finger rotates, two fingers zoom. Newest at the front.</p></div>
+  <div class="card" style="padding:6px"><div class="row" style="padding:4px 6px"><button class="ghost" onclick="landView('over')">Overview</button><button class="ghost" onclick="landView('along')">Fly along</button><button class="ghost" onclick="landView('top')">Top down</button><select id="landmode" onchange="drawLandscape()"><option value="range" selected>Synopsis range</option><option value="night">Selected night</option><option value="all">All nights</option></select></div><div class="hl" id="landhl" style="margin:4px 6px"></div><div id="ch-land" style="width:100%;height:62vh"></div></div>
   <div class="card"><b>How to read it</b>
     <div class="key" style="margin-top:8px"><span><i style="background:#1baf7a"></i>high green: breathing freely</span><span><i style="background:#eda100"></i>yellow dip: airway narrowing</span><span><i style="background:#e34948"></i>red crater: airflow stopped</span><span><i style="background:#c9c8c3"></i>grey floor: mask off</span><span><i style="background:#2a78d6;opacity:.6"></i>blue pool: mask leaking (over 24 L/min)</span><span><i style="background:#e34948;border-radius:50%"></i>red pillar: obstructive apnea</span><span><i style="background:#6250d6;border-radius:50%"></i>violet pillar: central apnea</span><span><i style="background:#eb6834;border-radius:50%"></i>orange pillar: hypopnea</span><span><i style="background:#fff;border:1px solid #999"></i>white line: pressure delivered</span></div>
     <p class="muted" style="margin:8px 0 0">Each strip is one night, evening on the left, morning on the right. Height is how freely you were breathing. A good night is a long flat green strip with no pillars and no water.</p></div>
