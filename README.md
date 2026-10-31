@@ -3,6 +3,12 @@
 Desktop analysis for ResMed AirSense 10 / 11 SD card data. Reads the raw EDF files, re-scores events from the 25 Hz flow
 signal, and shows the machine's scoring next to its own.
 
+## Phone version
+A web app that runs in Safari on iPhone (and any phone) from https://robertb-design.github.io/sleepscope/ . Add it to the home screen and it
+behaves like an app and works offline. Data gets in through an SD card reader and the Files app (compress the DATALOG folder, pick the zip).
+It scores nights, writes the synopsis, charts each night, zooms into events, imports oximeter CSV and talks to Claude. The 3D landscape and Apple Health
+import are desktop only. Source is in `docs/`.
+
 ## Try it without a card
 **Load sample data** on the toolbar generates seven nights for an imaginary patient in ResMed's file format (synthetic, no real person).
 
