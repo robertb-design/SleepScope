@@ -7,7 +7,7 @@ let nights = []; let history = []; let claudeBusy = false;
 const store = { get: (k, d) => { try { const v = localStorage.getItem('ss_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem('ss_' + k, JSON.stringify(v)); } catch (e) {} } };
 
 // ---------------------------------------------------------------- navigation
-function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); }
+function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); if (p === 'land' && nights.length) drawLandscape(); }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => go(b.dataset.p));
 
 // ---------------------------------------------------------------- IndexedDB for the last loaded files
@@ -111,6 +111,52 @@ function zoomEvent(ses, e) {
   $('zoomnote').textContent = 'Shaded = the event. Positive is inhaling, negative exhaling. A flat line with the airway closed is an obstructive apnea; a flat line after a big sigh with the airway open is usually a central.';
   $('zoomcard').scrollIntoView({ behavior: 'smooth' });
 }
+
+
+// ---------------------------------------------------------------- 3D landscape (WebGL via Plotly)
+const LB = { bin: 120, t0: 19, t1: 33, Z: 6 }; LB.n = (LB.t1 - LB.t0) * 3600 / LB.bin;
+let landCam = 'over';
+function nightGrids(n) {
+  const W = LB.n; const op = new Array(W).fill(NaN), lk = new Array(W).fill(NaN), pr = new Array(W).fill(NaN);
+  const [y, m, d] = n.date.split('-').map(Number); const base = new Date(y, m - 1, d, LB.t0, 0, 0).getTime();
+  for (const s of n.sessions) {
+    const fl = s.ch.FlowLim, leak = s.ch.Leak, press = s.ch.Press, vr = s.vent; const n2 = fl ? fl.length : (press ? press.length : 0); const step = LB.bin / 2;
+    for (let i2 = 0; i2 < n2; i2 += step) {
+      const b = Math.floor((s.start.getTime() + 2000 * i2 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; const j = Math.min(i2 + step, n2);
+      let f = 0; if (fl) { let a = 0; for (let k = i2; k < j; k++) a += fl[k]; f = a / (j - i2); }
+      let v = 1; if (vr) { const a1 = 2 * i2, a2 = Math.min(2 * j, vr.length); if (a2 > a1) { let a = 0; for (let k = a1; k < a2; k++) a += Math.min(vr[k], 1); v = a / (a2 - a1); } }
+      op[b] = v * (1 - 0.7 * f);
+      if (leak) { let a = 0; for (let k = i2; k < j; k++) a += leak[k]; lk[b] = 60 * a / (j - i2); }
+      if (press) { let a = 0; for (let k = i2; k < j; k++) a += press[k]; pr[b] = a / (j - i2); }
+    }
+  }
+  return { op, lk, pr, base };
+}
+function drawLandscape() {
+  if (!nights.length) return; const N = Math.min(+$('landn').value, nights.length); const sel = nights.slice(-N).reverse(); const W = LB.n;
+  const xs = Array.from({ length: W }, (_, i) => i * 0.25); const traces = []; const sw = 5, gap = 7;
+  const scale = [[0, '#c9c8c3'], [0.165, '#c9c8c3'], [0.1667, '#e34948'], [0.5, '#eda100'], [1, '#1baf7a']]; // value -0.2 .. 1 : grey floor then red->yellow->green
+  const pil = { 'Obstructive Apnea': { x: [], y: [], z: [], c: C.red }, 'Central Apnea': { x: [], y: [], z: [], c: C.violet }, 'Hypopnea': { x: [], y: [], z: [], c: C.orange } };
+  sel.forEach((n, k) => {
+    const { op, lk, pr, base } = nightGrids(n); const y0 = k * gap;
+    const z = op.map(v => Number.isNaN(v) ? -0.15 * LB.Z : Math.min(1, Math.max(0, v)) * LB.Z); const col = op.map(v => Number.isNaN(v) ? -0.2 : Math.min(1, Math.max(0, v)));
+    const zz = z.map((v, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(W - 1, i + 2); j++) { a += z[j]; c++; } return a / c; });
+    traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'skip', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date) });
+    const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'skip' });
+    const px = [], pz = []; pr.forEach((v, i) => { if (!Number.isNaN(v)) { px.push(xs[i]); pz.push(LB.Z * (1.15 + (v - 4) / 12)); } else { px.push(null); pz.push(null); } });
+    traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#ffffff', width: 3 }, hoverinfo: 'skip', name: 'pressure' });
+    for (const s of n.sessions) for (const e of s.machine) { const g = pil[e.label]; if (!g) continue; const b = (e.start.getTime() - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; const x = b * 0.25, z0 = Math.max(0, zz[Math.floor(b)]); const h = LB.Z * (/Apnea/.test(e.label) ? 0.9 : 0.6); g.x.push(x, x, null); g.y.push(y0, y0, null); g.z.push(z0, z0 + h, null); (g.sz ||= []).push(0, 4, 0); }
+  });
+  for (const [lab, g] of Object.entries(pil)) if (g.x.length) traces.push({ type: 'scatter3d', mode: 'lines+markers', x: g.x, y: g.y, z: g.z, line: { color: g.c, width: 6 }, marker: { color: g.c, size: g.sz }, name: lab, hoverinfo: 'name' });
+  const ticks = []; for (let h = LB.t0; h <= LB.t1; h += 2) ticks.push(h);
+  const layout = { margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, paper_bgcolor: '#f6f5f2', scene: {
+      xaxis: { tickvals: ticks.map(h => (h - LB.t0) * 3600 / LB.bin * 0.25), ticktext: ticks.map(h => `${String(h % 24).padStart(2, '0')}:00`), title: { text: '' }, showbackground: false, showgrid: false, zeroline: false, showspikes: false },
+      yaxis: { tickvals: sel.map((_, k) => k * gap), ticktext: sel.map(n => SS.label(n.date)), title: { text: '' }, showbackground: false, showgrid: false, zeroline: false, showspikes: false },
+      zaxis: { visible: false, range: [-2, 2.6 * LB.Z], showspikes: false }, aspectmode: 'manual', aspectratio: { x: 2.2, y: Math.max(0.6, 0.11 * N), z: 0.45 }, camera: cams(N)[landCam], dragmode: 'orbit' } };
+  Plotly.react('ch-land', traces, layout, { displayModeBar: false, responsive: true });
+}
+function cams(N) { const c = { x: 0, y: 0, z: 0 }; return { over: { eye: { x: -0.85, y: -1.75, z: 1.05 }, center: { x: 0, y: 0, z: 0.05 } }, along: { eye: { x: -1.9, y: -0.4, z: 0.35 }, center: { x: 0, y: 0, z: -0.1 } }, top: { eye: { x: 0, y: -0.01, z: 1.9 }, center: c } }; }
+function landView(v) { landCam = v; drawLandscape(); }
 
 // ---------------------------------------------------------------- Claude
 const SYSTEM = `You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data. Give plain, direct, well-reasoned answers with no filler. Use the numbers in the CONTEXT block; do not invent data. Say when something is not in the data and what would answer it. Pressure settings are prescribed: discuss trade-offs and what to raise with the prescriber rather than instructing changes. Never use dashes in prose. Keep answers tight.`;

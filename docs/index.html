@@ -68,7 +68,7 @@
   <div class="card step" style="--c:#eb6834"><div class="badge">4</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Connect Claude</h3><span class="status" id="st4">No key</span></div><p>Save an API key from console.anthropic.com and Claude writes its own reading of your data and answers questions (a few cents each).</p><button style="--c:#eb6834" onclick="go('ask')">Set up Ask Claude</button></div></div>
   <div class="card step" style="--c:#e34948"><div class="badge">5</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Add an oximeter</h3><span class="status" id="st5">Optional</span></div><p>Export a CSV from the O2Ring app and import it here; the oxygen section fills in.</p><label class="btn" style="--c:#e34948;display:inline-block">Import oximeter CSV<input type="file" id="oxin" accept=".csv,text/csv" style="display:none"></label></div></div>
   <div class="card"><details><summary>How to use, step by step</summary><div id="helptext" class="syn"></div></details></div>
-  <p class="muted">SleepScope is a reading of the data, not a medical device. Nothing leaves this phone unless you use Ask Claude. The desktop version with the 3D landscape and Apple Health import is at github.com/robertb-design/sleepscope.</p>
+  <p class="muted">SleepScope is a reading of the data, not a medical device. Nothing leaves this phone unless you use Ask Claude. The desktop version with Apple Health import is at github.com/robertb-design/sleepscope.</p>
 </section>
 
 <section class="page" id="p-syn">
@@ -87,6 +87,15 @@
   <div id="nightdetail"></div>
 </section>
 
+
+<section class="page" id="p-land">
+  <div class="banner" style="--c:#6250d6;--c2:#3d2f9b"><h2>3D Landscape</h2><p>A week as terrain. One finger rotates, two fingers zoom. Newest night at the front.</p></div>
+  <div class="card" style="padding:6px"><div class="row" style="padding:4px 6px"><button class="ghost" onclick="landView('over')">Overview</button><button class="ghost" onclick="landView('along')">Fly along</button><button class="ghost" onclick="landView('top')">Top down</button><select id="landn" onchange="drawLandscape()"><option value="7">last 7</option><option value="14" selected>last 14</option><option value="30">last 30</option><option value="60">last 60</option></select></div><div id="ch-land" style="width:100%;height:62vh"></div></div>
+  <div class="card"><b>How to read it</b>
+    <div class="key" style="margin-top:8px"><span><i style="background:#1baf7a"></i>high green: breathing freely</span><span><i style="background:#eda100"></i>yellow dip: airway narrowing</span><span><i style="background:#e34948"></i>red crater: airflow stopped</span><span><i style="background:#c9c8c3"></i>grey floor: mask off</span><span><i style="background:#2a78d6;opacity:.6"></i>blue pool: mask leaking (over 24 L/min)</span><span><i style="background:#e34948;border-radius:50%"></i>red pillar: obstructive apnea</span><span><i style="background:#6250d6;border-radius:50%"></i>violet pillar: central apnea</span><span><i style="background:#eb6834;border-radius:50%"></i>orange pillar: hypopnea</span><span><i style="background:#fff;border:1px solid #999"></i>white line: pressure delivered</span></div>
+    <p class="muted" style="margin:8px 0 0">Each strip is one night, evening on the left, morning on the right. Height is how freely you were breathing. A good night is a long flat green strip with no pillars and no water.</p></div>
+</section>
+
 <section class="page" id="p-ask">
   <div class="banner" style="--c:#eb6834;--c2:#a63d14"><h2>Ask Claude</h2><p>Questions answered from your numbers. Saved on this phone.</p></div>
   <div class="card"><label class="f">API key (from console.anthropic.com, starts with sk-ant-)</label><input type="password" id="apikey" placeholder="sk-ant-...">
@@ -103,10 +112,11 @@
   <button data-p="start" class="active"><span class="ic">⌂</span>Start</button>
   <button data-p="syn"><span class="ic">≡</span>Synopsis</button>
   <button data-p="nights"><span class="ic">◔</span>Nights</button>
+  <button data-p="land"><span class="ic">▲</span>3D</button>
   <button data-p="ask"><span class="ic">✦</span>Ask</button>
 </nav>
 <script src="vendor/jszip.min.js"></script>
-<script src="vendor/plotly-basic.min.js"></script>
+<script src="vendor/plotly.min.js"></script>
 <script src="engine.js"></script>
 <script src="app.js"></script>
 </body>
