@@ -47,10 +47,24 @@ function afterLoad() {
   const hrs = nights.reduce((a, n) => a + n.hours, 0); const ev = nights.reduce((a, n) => a + n.stats.OA + n.stats.CA + n.stats.H + n.stats.UA, 0);
   $('startsum').textContent = `Loaded: ${nights.length} nights, ${hrs.toFixed(1)} hours, machine AHI ${(ev / hrs).toFixed(1)}.`;
   $('d0').value = nights[Math.max(0, nights.length - 30)].date; $('d1').value = last.date;
+  if (appleData) { const n = AH.attach(appleData, nights); if (n) { $('st6').textContent = '✔ Watch data present'; $('st6').className = 'status ok'; } }
   renderSynopsis(); fillNightTable(); if ($('p-nights').classList.contains('active')) drawOverview();
 }
 $('filein').onchange = async (e) => { const list = [...e.target.files]; if (!list.length) return; try { const files = normalise(await filesFromInputs(list)); await loadFiles(files, list.length === 1 ? list[0].name : list.length + ' files'); try { await idb.put('last', { files, label: list.length === 1 ? list[0].name : list.length + ' files', when: Date.now() }); } catch (err) {} } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
 $('samplebtn').onclick = async () => { $('loadmsg').textContent = 'Fetching sample card…'; try { const r = await fetch('sample.zip'); const z = await JSZip.loadAsync(await r.arrayBuffer()); const files = {}; for (const [name, entry] of Object.entries(z.files)) if (!entry.dir && /\.edf$/i.test(name)) files[name] = await entry.async('arraybuffer'); await loadFiles(normalise(files), 'sample card'); } catch (e) { $('loadmsg').textContent = 'Sample not available offline yet: ' + e; } };
+let appleData = null;
+$('applein').onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return; if (!nights.length) { $('applemsg').textContent = 'Load the card first.'; return; }
+  const since = new Date(nights[0].date + 'T00:00').getTime() - 86400e3; $('applemsg').textContent = 'Reading ' + f.name + '…';
+  try {
+    if (/\.(zip|xml)$/i.test(f.name)) appleData = await AH.readExport(f, since, (b, t) => { $('applemsg').textContent = `Scanning ${f.name}: ${(b / 1048576).toFixed(0)} MB read`; });
+    else appleData = AH.readShortcutCsv(await f.text());
+    const n = AH.attach(appleData, nights); try { await idb.put('apple', AH.pack(appleData)); } catch (err) {}
+    $('applemsg').textContent = `${appleData.sleep.length.toLocaleString()} sleep records, ${appleData.hr.length.toLocaleString()} heart rate, ${appleData.spo2.length.toLocaleString()} SpO2 samples. Matched to ${n} of ${nights.length} nights.`;
+    $('st6').textContent = n ? '✔ Watch data present' : 'No matching nights'; $('st6').className = 'status' + (n ? ' ok' : ''); renderSynopsis(); if ($('p-nights').classList.contains('active')) drawOverview();
+  } catch (err) { $('applemsg').textContent = 'Could not read that: ' + err.message; }
+  e.target.value = '';
+};
 $('oxin').onchange = async (e) => { const f = e.target.files[0]; if (!f || !nights.length) return; const n = SS.importOximeterCsv(await f.text(), nights); for (const nt of nights) nt.stats = SS.nightStats(nt); afterLoad(); alert(`SpO2 attached to ${n} session(s) by timestamp.`); e.target.value = ''; };
 
 // ---------------------------------------------------------------- synopsis
@@ -59,11 +73,19 @@ function addDays(iso, d) { const x = new Date(iso); x.setDate(x.getDate() + d); 
 function renderSynopsis() {
   if (!nights.length) return; let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a];
   const diag = parseFloat($('diag').value) || null; store.set('diag', diag);
-  $('syntext').innerHTML = SS.synopsis(nights, a, b, diag);
+  $('syntext').innerHTML = SS.synopsis(nights, a, b, diag) + appleSection(a, b);
   claudeSynopsis(false);
 }
 ['d0', 'd1', 'diag'].forEach(id => $(id).onchange = renderSynopsis);
 
+function appleSection(a, b) {
+  const ah = nights.filter(n => n.date >= a && n.date <= b && n.apple); if (!ah.length) return '';
+  const m = (k) => { const v = ah.map(n => n.apple[k]).filter(Number.isFinite); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : NaN; };
+  const mn = (k) => { const v = ah.map(n => n.apple[k]).filter(Number.isFinite); return v.length ? Math.min(...v) : NaN; };
+  let t = `<h3>Apple Watch</h3><p>Watch data on ${ah.length} night${ah.length > 1 ? 's' : ''}: asleep ${m('asleep_h').toFixed(1)} h, deep ${m('deep_min').toFixed(0)} min, REM ${m('rem_min').toFixed(0)} min, awake ${m('awake_min').toFixed(0)} min, overnight heart rate ${m('hr_mean').toFixed(0)} bpm` + (Number.isFinite(m('hrv')) ? `, HRV ${m('hrv').toFixed(0)} ms` : '') + (Number.isFinite(mn('spo2_min')) ? `, Watch SpO2 minimum ${mn('spo2_min').toFixed(0)}%` : '') + '.</p>';
+  const cov = ah.filter(n => n.apple.asleep_h > 0).map(n => 100 * Math.min(n.hours, n.apple.asleep_h) / n.apple.asleep_h); if (cov.length) t += `<p>The machine covered about ${(cov.reduce((x, y) => x + y, 0) / cov.length).toFixed(0)}% of the sleep the Watch recorded. The gap is untreated sleep; closing it is worth more than any pressure change.</p>`;
+  return t;
+}
 // ---------------------------------------------------------------- charts
 function drawOverview() {
   const x = nights.map(n => SS.label(n.date)); const S = nights.map(n => n.stats);
@@ -84,20 +106,27 @@ function showNight(i) {
   const box = $('nightdetail'); box.innerHTML = `<div class="card"><h3 style="margin:0 0 6px">${new Date(n.date + 'T12:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3>
     <div class="row" style="gap:6px"><span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span><span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span><span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}</div>
     <p class="muted" style="margin:8px 0 0">Sessions ${s.starts} to ${s.ends}. OA ${s.OA}, CA ${s.CA}, H ${s.H}, arousals ${s.arousals}. RR ${s.rr_med.toFixed(0)}, Vt ${s.tv_med.toFixed(0)} mL, MV ${s.mv_med.toFixed(1)}.</p></div>
-    <div class="card"><div id="ch-night" style="width:100%;height:${s.spo2_mean ? 620 : 520}px"></div><div class="key"><span><i style="background:${C.red}"></i>obstructive</span><span><i style="background:${C.violet}"></i>central</span><span><i style="background:${C.orange}"></i>hypopnea</span><span><i style="background:${C.amber}"></i>arousal</span><span>lighter bands = app events</span></div></div>
+    <div class="card"><div id="ch-night" style="width:100%;height:${520 + (Number.isFinite(s.spo2_mean) ? 100 : 0) + (n.apple && n.apple.stages.length ? 200 : 0)}px"></div><div class="key"><span><i style="background:${C.red}"></i>obstructive</span><span><i style="background:${C.violet}"></i>central</span><span><i style="background:${C.orange}"></i>hypopnea</span><span><i style="background:${C.amber}"></i>arousal</span><span>lighter bands = app events</span></div></div>
     <div class="card"><b>Events</b> <span class="muted">(tap one to see the airflow around it)</span><div id="evlist"></div></div><div class="card" id="zoomcard" style="display:none"><div id="ch-zoom" style="width:100%;height:240px"></div><div class="muted" id="zoomnote"></div></div>`;
   box.scrollIntoView({ behavior: 'smooth' });
   const t0 = n.sessions[0].start; const tr = []; const shapes = [];
   const series = (k, sc, name, color, yaxis) => { const xs = [], ys = []; for (const ses of n.sessions) { const a = ses.ch[k]; if (!a) continue; for (let i = 0; i < a.length; i++) { xs.push(new Date(ses.start.getTime() + 2000 * i)); ys.push(a[i] * sc); } xs.push(null); ys.push(null); } if (xs.length) tr.push({ x: xs, y: ys, mode: 'lines', line: { color, width: 1 }, name, yaxis, hoverinfo: 'x+y+name' }); };
   series('Press', 1, 'Set pressure', C.blue, 'y'); series('MaskPress', 1, 'Mask pressure', C.aqua, 'y'); series('Leak', 60, 'Leak L/min', C.orange, 'y2'); series('FlowLim', 1, 'Flow limitation', C.violet, 'y3'); series('Snore', 1, 'Snore', '#e87ba4', 'y3'); series('TidVol', 1000, 'Tidal volume mL', C.green, 'y4');
   for (const ses of n.sessions) if (ses.vent) { const xs = [], ys = []; for (let i = 0; i < ses.vent.length; i += 2) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.vent[i]); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.aqua, width: 1 }, name: 'Ventilation vs baseline', yaxis: 'y5' }); }
-  const hasOx = n.sessions.some(x => x.hasOx);
+  const hasOx = n.sessions.some(x => x.hasOx); const hasAp = !!(n.apple && (n.apple.stages.length || n.apple.hr.length));
   if (hasOx) for (const ses of n.sessions) if (ses.spo2) { const xs = [], ys = [], yp = []; for (let i = 0; i < ses.spo2.length; i += 5) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.spo2[i] > 0 ? ses.spo2[i] : null); yp.push(ses.pulse && ses.pulse[i] > 0 ? ses.pulse[i] : null); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.red, width: 1 }, name: 'SpO2 %', yaxis: 'y6' }); tr.push({ x: xs, y: yp, mode: 'lines', line: { color: C.orange, width: 1 }, name: 'Pulse', yaxis: 'y6' }); }
   for (const ses of n.sessions) for (const e of [...ses.machine, ...ses.app]) { const col = EVC[e.label]; if (!col) continue; shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: e.start, x1: new Date(e.start.getTime() + Math.max(e.dur, 20) * 1000), y0: 0, y1: 1, fillcolor: col, opacity: e.source === 'machine' ? 0.35 : 0.15, line: { width: 0 } }); }
-  const nrows = hasOx ? 6 : 5; const dom = (k) => { const h = 1 / nrows, gap = 0.035; return [1 - (k + 1) * h + gap, 1 - k * h - gap / 2]; };
+  if (hasAp) {
+    const ord = { InBed: 0, Deep: 1, Core: 2, Asleep: 2, REM: 3, Awake: 4 }; const cols = { InBed: '#d9d8d3', Deep: '#0f6e4f', Core: C.blue, Asleep: C.blue, REM: C.violet, Awake: C.orange };
+    for (const r of n.apple.stages) shapes.push({ type: 'rect', xref: 'x', yref: hasOx ? 'y7' : 'y6', x0: new Date(r.s), x1: new Date(r.e), y0: (ord[r.stage] ?? 2) - 0.4, y1: (ord[r.stage] ?? 2) + 0.4, fillcolor: cols[r.stage] || C.grey, line: { width: 0 } });
+    if (n.apple.hr.length) tr.push({ x: n.apple.hr.map(([t]) => new Date(t)), y: n.apple.hr.map(([, v]) => v), mode: 'lines', line: { color: C.red, width: 1 }, name: 'Watch HR', yaxis: hasOx ? 'y8' : 'y7' });
+    if (n.apple.spo2.length) tr.push({ x: n.apple.spo2.map(([t]) => new Date(t)), y: n.apple.spo2.map(([, v]) => v), mode: 'markers', marker: { color: n.apple.spo2.map(([, v]) => v < 90 ? C.red : C.blue), size: 5 }, name: 'Watch SpO2', yaxis: hasOx ? 'y8' : 'y7' });
+  }
+  const nrows = (hasOx ? 6 : 5) + (hasAp ? 2 : 0); const dom = (k) => { const h = 1 / nrows, gap = 0.035; return [1 - (k + 1) * h + gap, 1 - k * h - gap / 2]; };
   const layout = { margin: { l: 36, r: 10, t: 10, b: 30 }, showlegend: false, shapes, hovermode: 'x', dragmode: 'pan', xaxis: { type: 'date', tickformat: '%H:%M' },
     yaxis: { domain: dom(0), title: { text: 'cmH2O', font: { size: 10 } }, range: [0, 21] }, yaxis2: { domain: dom(1), title: { text: 'leak', font: { size: 10 } }, range: [0, 60] }, yaxis3: { domain: dom(2), title: { text: 'FL', font: { size: 10 } }, range: [0, 1] }, yaxis4: { domain: dom(3), title: { text: 'Vt', font: { size: 10 } }, range: [0, 1200] }, yaxis5: { domain: dom(4), title: { text: 'vent', font: { size: 10 } }, range: [0, 2.5] } };
   if (hasOx) layout.yaxis6 = { domain: dom(5), title: { text: 'SpO2', font: { size: 10 } }, range: [80, 100] };
+  if (hasAp) { const k = hasOx ? 6 : 5; layout['yaxis' + (k + 1)] = { domain: dom(k), tickvals: [0, 1, 2, 3, 4], ticktext: ['bed', 'deep', 'core', 'REM', 'wake'], range: [-0.6, 4.6], tickfont: { size: 9 } }; layout['yaxis' + (k + 2)] = { domain: dom(k + 1), title: { text: 'Watch', font: { size: 10 } }, range: [40, 110] }; }
   Plotly.newPlot('ch-night', tr, layout, { displayModeBar: false, responsive: true, scrollZoom: true });
   const ev = n.sessions.flatMap(ses => [...ses.machine, ...ses.app].map(e => ({ e, ses }))).sort((a, b) => a.e.start - b.e.start).filter(x => x.e.label !== 'Flow Limitation Run' || x.e.dur >= 60);
   const list = $('evlist'); list.innerHTML = ev.length ? '' : '<p class="muted">No events.</p>';
@@ -145,6 +174,12 @@ function drawLandscape() {
     const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'skip' });
     const px = [], pz = []; pr.forEach((v, i) => { if (!Number.isNaN(v)) { px.push(xs[i]); pz.push(LB.Z * (1.15 + (v - 4) / 12)); } else { px.push(null); pz.push(null); } });
     traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#ffffff', width: 3 }, hoverinfo: 'skip', name: 'pressure' });
+    if (n.apple && n.apple.stages.length) {
+      const stageCol = { Deep: 0.1, Core: 0.35, Asleep: 0.35, REM: 0.6, Awake: 0.85, InBed: 1.0 }; const rib = new Array(W).fill(null); const rc = new Array(W).fill(0);
+      for (const r of n.apple.stages) { const b0 = Math.max(0, Math.floor((r.s - base) / 1000 / LB.bin)), b1 = Math.min(W, Math.ceil((r.e - base) / 1000 / LB.bin)); for (let b = b0; b < b1; b++) { if (r.stage === 'InBed' && rib[b] !== null) continue; rib[b] = 0.25 * LB.Z; rc[b] = stageCol[r.stage] ?? 0.35; } }
+      traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2 - 1.9, y0 - sw / 2 - 1.1, y0 - sw / 2 - 0.3], z: [rib, rib, rib], surfacecolor: [rc, rc, rc], colorscale: [[0, '#0f6e4f'], [0.3, '#2a78d6'], [0.5, '#2a78d6'], [0.7, '#6250d6'], [0.9, '#eb6834'], [1, '#d9d8d3']], cmin: 0, cmax: 1, showscale: false, hoverinfo: 'skip', opacity: 0.95 });
+      if (n.apple.hr.length) { const hx = [], hz = []; for (const [t, v] of n.apple.hr) { const b = (t - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; hx.push(b * 0.25); hz.push(LB.Z * (1.6 + (v - 40) / 80)); } traces.push({ type: 'scatter3d', mode: 'lines', x: hx, y: hx.map(() => y0 - sw / 2 - 1.1), z: hz, line: { color: C.red, width: 2 }, hoverinfo: 'skip' }); }
+    }
     for (const s of n.sessions) for (const e of s.machine) { const g = pil[e.label]; if (!g) continue; const b = (e.start.getTime() - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; const x = b * 0.25, z0 = Math.max(0, zz[Math.floor(b)]); const h = LB.Z * (/Apnea/.test(e.label) ? 0.9 : 0.6); g.x.push(x, x, null); g.y.push(y0, y0, null); g.z.push(z0, z0 + h, null); (g.sz ||= []).push(0, 4, 0); }
   });
   for (const [lab, g] of Object.entries(pil)) if (g.x.length) traces.push({ type: 'scatter3d', mode: 'lines+markers', x: g.x, y: g.y, z: g.z, line: { color: g.c, width: 6 }, marker: { color: g.c, size: g.sz }, name: lab, hoverinfo: 'name' });
@@ -219,5 +254,6 @@ $('helptext').innerHTML = `
 <h3>The numbers in plain words</h3><ul><li><b>Hours:</b> four hours on 70% of nights is the insurer's floor; six or more is where people feel it.</li><li><b>AHI:</b> under 5 normal, 5 to 15 mild, 15 to 30 moderate, over 30 severe. The app's flow-only AHI is a ceiling, always higher.</li><li><b>Leak:</b> 95th percentile under 24 L/min.</li><li><b>Flow limitation:</b> narrowing short of an event; fragments sleep without raising AHI.</li><li><b>SpO2 / ODI:</b> needs the ring; ODI under 5 and almost no time under 90% is the goal.</li></ul>`;
 (async () => {
   if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js'); } catch (e) {} }
+  try { const ap = await idb.get('apple'); if (ap) appleData = AH.unpack(ap); } catch (e) {}
   try { const last = await idb.get('last'); if (last && last.files) { $('loadmsg').textContent = 'Reloading ' + last.label + ' from last time…'; await loadFiles(last.files, last.label); } } catch (e) {}
 })();

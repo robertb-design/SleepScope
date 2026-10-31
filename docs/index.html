@@ -67,8 +67,25 @@
   <div class="card step" style="--c:#6250d6"><div class="badge">3</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Look at the nights</h3><span class="status" id="st3">Needs data</span></div><p>Trends across nights and the detail of any one night: pressure, leak, flow limitation, events, and the raw airflow around each event.</p><button style="--c:#6250d6" onclick="go('nights')">Go to Nights</button></div></div>
   <div class="card step" style="--c:#eb6834"><div class="badge">4</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Connect Claude</h3><span class="status" id="st4">No key</span></div><p>Save an API key from console.anthropic.com and Claude writes its own reading of your data and answers questions (a few cents each).</p><button style="--c:#eb6834" onclick="go('ask')">Set up Ask Claude</button></div></div>
   <div class="card step" style="--c:#e34948"><div class="badge">5</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Add an oximeter</h3><span class="status" id="st5">Optional</span></div><p>Export a CSV from the O2Ring app and import it here; the oxygen section fills in.</p><label class="btn" style="--c:#e34948;display:inline-block">Import oximeter CSV<input type="file" id="oxin" accept=".csv,text/csv" style="display:none"></label></div></div>
+  <div class="card step" style="--c:#eda100"><div class="badge">6</div><div style="flex:1"><div class="row" style="justify-content:space-between"><h3>Add Apple Health</h3><span class="status" id="st6">Optional</span></div>
+    <p>Two ways. <b>Quick:</b> a Shortcut that pulls the last 30 days straight from Health into a small file (build it once, instructions below). <b>Full:</b> Health app, profile picture, Export All Health Data, then pick export.zip here; it is scanned as a stream, so large exports are fine but take a minute or two.</p>
+    <div class="row"><label class="btn" style="--c:#eda100;text-align:center">Import Health file<input type="file" id="applein" accept=".zip,.xml,.csv,.txt,text/csv,application/zip" style="display:none"></label><button class="ghost" onclick="document.getElementById('shortcuthelp').open=true;document.getElementById('shortcuthelp').scrollIntoView({behavior:'smooth'})">How to build the Shortcut</button></div>
+    <div class="muted" id="applemsg"></div></div></div>
+  <div class="card"><details id="shortcuthelp"><summary>Build the SleepScope Health Shortcut (once, about two minutes)</summary><div class="syn">
+    <p>Open the <b>Shortcuts</b> app, tap <b>+</b>, name it <b>SleepScope Health</b>, then add these actions in order (type each name in the search box):</p>
+    <ol>
+      <li><b>Find Health Samples</b>. Set Type to <b>Sleep Analysis</b>. Add filter: Start Date <b>is in the last</b> 30 days. Sort by Start Date.</li>
+      <li><b>Repeat with Each</b> (it fills in the samples from step 1).</li>
+      <li>Inside the repeat: <b>Text</b>, containing exactly: <code>Sleep Analysis,</code> then tap to insert <b>Repeat Item</b> three times, and for each inserted item tap it and choose <b>Start Date</b>, <b>End Date</b>, <b>Value</b> respectively, with a comma between each. The line should read <code>Sleep Analysis,[Start Date],[End Date],[Value]</code>. For the two dates, tap the item, set Date Format to <b>Custom</b> and format string <code>yyyy-MM-dd HH:mm:ss</code>.</li>
+      <li><b>End Repeat</b> is added automatically. After it, add <b>Combine Text</b>, input Repeat Results, separator <b>New Lines</b>.</li>
+      <li>Repeat steps 1 to 4 for <b>Heart Rate</b> (put <code>Heart Rate,</code> at the start of the Text line), and again for <b>Blood Oxygen Saturation</b> (<code>Blood Oxygen,</code>). Heart rate has many samples; if the Shortcut gets slow, filter Start Date to the last 14 days.</li>
+      <li>Add one final <b>Combine Text</b> joining the three combined texts with New Lines, then <b>Save File</b> (service iCloud Drive, ask where to save on, name <code>sleepscope_health.csv</code>).</li>
+    </ol>
+    <p>Run it, save the file, then tap <b>Import Health file</b> above and pick it. Run it again whenever you want fresh Watch data; it takes a few seconds. The first run asks permission to read Health; allow Sleep, Heart Rate and Blood Oxygen.</p>
+    <p class="muted">Why a Shortcut: only an app on the phone can read Health directly, and Shortcuts is Apple's own way to let you do that without writing an app. SleepScope never sees anything but the file you choose.</p>
+  </div></details></div>
   <div class="card"><details><summary>How to use, step by step</summary><div id="helptext" class="syn"></div></details></div>
-  <p class="muted">SleepScope is a reading of the data, not a medical device. Nothing leaves this phone unless you use Ask Claude. The desktop version with Apple Health import is at github.com/robertb-design/sleepscope.</p>
+  <p class="muted">SleepScope is a reading of the data, not a medical device. Nothing leaves this phone unless you use Ask Claude. The desktop version is at github.com/robertb-design/sleepscope.</p>
 </section>
 
 <section class="page" id="p-syn">
@@ -118,6 +135,7 @@
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/plotly.min.js"></script>
 <script src="engine.js"></script>
+<script src="apple.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
