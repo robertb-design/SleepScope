@@ -277,12 +277,13 @@ def night_stats(nt: Night) -> dict:
         spo2_pct_lt90=float((spv < 90).mean() * 100) if len(spv) else np.nan, spo2_pct_lt88=float((spv < 88).mean() * 100) if len(spv) else np.nan, ODI=odi / (len(spv) / 3600) if len(spv) > 600 else np.nan, spo2_minutes_lt88=float((spv < 88).sum() / 60) if len(spv) else np.nan,
         pulse_mean=float(puv.mean()) if len(puv) else np.nan, pulse_min=float(puv.min()) if len(puv) else np.nan, pulse_max=float(puv.max()) if len(puv) else np.nan,
     )
+    d['setting'] = pressure_label(d)
     nt.stats = d
     return d
 
 
 STAT_COLUMNS = [
-    ('label', 'Night', ''), ('hours', 'Hours', '{:.2f}'), ('sessions', 'Sess', '{}'), ('mode', 'Mode', ''),
+    ('label', 'Night', ''), ('hours', 'Hours', '{:.2f}'), ('sessions', 'Sess', '{}'), ('mode', 'Mode', ''), ('setting', 'Pressure setting', ''),
     ('AHI', 'AHI machine', '{:.2f}'), ('OA', 'OA', '{}'), ('CA', 'CA', '{}'), ('H', 'H', '{}'), ('arousals', 'Arousal', '{}'),
     ('app_AHI', 'AHI app', '{:.2f}'), ('app_unflagged', 'Unflagged AP', '{}'), ('app_RDI', 'RDI app', '{:.2f}'), ('app_flowlim_runs', 'FL runs', '{}'), ('app_RERA_like', 'RERA-like', '{}'),
     ('press_min', 'P min', '{:.1f}'), ('press_med', 'P med', '{:.1f}'), ('press_95', 'P 95%', '{:.1f}'), ('press_max', 'P max', '{:.1f}'),
@@ -335,6 +336,13 @@ def settings_summary(nights, str_data=None):
     else:
         out['str_found'] = False
     return out
+
+
+def pressure_label(stats):
+    """Short pressure setting text for a night, from the trace: 'AutoSet 4 to 12' or 'CPAP 9'."""
+    lo, hi = stats.get('press_min', np.nan), stats.get('press_max', np.nan)
+    if not (np.isfinite(lo) and np.isfinite(hi)): return ''
+    return f"CPAP {hi:.0f}" if stats.get('mode') == 'CPAP' else f"AutoSet {lo:.0f} to {hi:.0f}"
 
 
 def settings_text(sm, html=True):

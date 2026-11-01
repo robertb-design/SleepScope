@@ -45,7 +45,7 @@ With Apple Health imported, a flat ribbon in front of each strip shows the Watch
 night, a red line above it is heart rate, and dots are Watch SpO2 readings (red when under 90%). Ribbon over grey floor is sleep with the mask off.
 
 ## Synopsis
-Pick a date range (or Last 7 / 14 / 30 / All) and the tab writes a plain English report: usage, event control, event mix, central apnea and periodic
+On opening, the app shows the Synopsis for the most recent night. Pick a date range (Last night / 7 / 14 / 30 / All) and the tab writes a plain English report: usage, event control, event mix, central apnea and periodic
 breathing checks, settings changes and how AHI and flow limitation behaved under each, leak, breathing mechanics, oxygen (when an oximeter is attached),
 Apple Watch sleep (when imported), and a short "what this means" list. Enter your diagnostic AHI from the sleep study to get the percent reduction.
 Copy or save as HTML to send to the prescriber.

@@ -108,7 +108,13 @@ class NightView(QtWidgets.QWidget):
         self.t0 = night.sessions[0].start
         self._build_panels(self.t0)
         self.ov.setAxisItems({'bottom': TimeAxis(self.t0, orientation='bottom')}); style_plot(self.ov.getPlotItem())
-        self.title.setText(f"{night.date.strftime('%A %B %d, %Y')}   {night.hours:.2f} h in {len(night.sessions)} session(s)")
+        def sess_txt(s):
+            pr = s.ch.get('Press'); 
+            if pr is None or not len(pr): return s.start.strftime('%H:%M')
+            tail = pr[max(int(len(pr) * 0.15), min(900, len(pr) // 2)):]
+            fixed = len(tail) and float(np.std(tail)) < 0.05
+            return f"{s.start.strftime('%H:%M')} ({'CPAP ' + f'{pr.max():.0f}' if fixed else f'{pr.min():.0f} to {pr.max():.0f}'})"
+        self.title.setText(f"{night.date.strftime('%A %B %d, %Y')}   {night.hours:.2f} h, sessions: " + ', '.join(sess_txt(s) for s in night.sessions))
         from . import scoring as _sc
         self.highlight.setText('<b>SETTINGS</b> &nbsp; ' + _sc.settings_text(_sc.settings_summary([night], self.str_data)))
         total_end = (night.sessions[-1].end - self.t0).total_seconds()

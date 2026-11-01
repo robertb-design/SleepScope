@@ -171,7 +171,7 @@ class SynopsisView(QtWidgets.QWidget):
         bar = QtWidgets.QHBoxLayout(); lay.addLayout(bar)
         bar.addWidget(QtWidgets.QLabel('From')); self.d0 = QtWidgets.QDateEdit(calendarPopup=True); self.d0.setDisplayFormat('MMM d, yyyy'); bar.addWidget(self.d0)
         bar.addWidget(QtWidgets.QLabel('to')); self.d1 = QtWidgets.QDateEdit(calendarPopup=True); self.d1.setDisplayFormat('MMM d, yyyy'); bar.addWidget(self.d1)
-        for lab, days in (('Last 7', 7), ('Last 14', 14), ('Last 30', 30), ('All', None)):
+        for lab, days in (('Last night', 1), ('Last 7', 7), ('Last 14', 14), ('Last 30', 30), ('All', None)):
             b = QtWidgets.QPushButton(lab); b.clicked.connect(lambda _, d=days: self.quick(d)); bar.addWidget(b)
         bar.addSpacing(16); bar.addWidget(QtWidgets.QLabel('Diagnostic AHI (from your sleep study, optional)'))
         self.diag = QtWidgets.QDoubleSpinBox(); self.diag.setRange(0, 200); self.diag.setDecimals(0); self.diag.setSpecialValueText('not set')
@@ -200,7 +200,7 @@ class SynopsisView(QtWidgets.QWidget):
         self.nights = nights
         if not nights: return
         self.d0.blockSignals(True); self.d1.blockSignals(True)
-        self.d0.setDate(QtCore.QDate(nights[0].date)); self.d1.setDate(QtCore.QDate(nights[-1].date))
+        self.d0.setDate(QtCore.QDate(nights[-1].date)); self.d1.setDate(QtCore.QDate(nights[-1].date))   # opens on the most recent night
         self.d0.blockSignals(False); self.d1.blockSignals(False); self.generate()
     def quick(self, days):
         if not self.nights: return
@@ -316,7 +316,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         split = QtWidgets.QSplitter(); self.setCentralWidget(split)
         left = QtWidgets.QWidget(); ll = QtWidgets.QVBoxLayout(left); ll.setContentsMargins(4, 4, 0, 4)
-        self.night_table = Table(['Night', 'Hours', 'Mode', 'AHI', 'AHI app', 'Leak 95', 'P 95'])
+        self.night_table = Table(['Night', 'Hours', 'Pressure setting', 'AHI', 'AHI app', 'Leak 95', 'P 95'])
         self.night_table.itemSelectionChanged.connect(self._night_selected); ll.addWidget(self.night_table)
         self.device_label = QtWidgets.QLabel(''); self.device_label.setWordWrap(True); self.device_label.setStyleSheet('color:#52514e'); ll.addWidget(self.device_label)
         left.setMinimumWidth(440); split.addWidget(left)
@@ -389,14 +389,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
         self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
         self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
-        if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self.tabs.setCurrentWidget(self.synopsis)
+        if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self._show_tab(self.synopsis)
         if not self.nights: QtWidgets.QMessageBox.information(self, 'No data', 'No sessions of 5 minutes or longer were found under that folder.')
 
     def _fill_nights(self):
         rows = []
         for n in self.nights:
             s = n.stats
-            rows.append([n.label, f"{s['hours']:.2f}", s['mode'], f"{s['AHI']:.2f}", f"{s['app_AHI']:.2f}", scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
+            rows.append([n.label, f"{s['hours']:.2f}", scoring.pressure_label(s), f"{s['AHI']:.2f}", f"{s['app_AHI']:.2f}", scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
         self.night_table.fill(rows)
     def _fill_stats(self):
         self.stats_table.fill([[scoring.fmt(k, n.stats.get(k)) for k, _, _ in scoring.STAT_COLUMNS] for n in self.nights])
@@ -424,12 +424,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if not rows: return
         nt = self.nights[rows[0].row()]; self.current = nt
         self.night_view.set_night(nt); self.breaths.set_night(nt); self._fill_events(); self.landscape.set_selected(nt)
-        if self.tabs.currentIndex() == 0: self.tabs.setCurrentIndex(1)
+        if self.tabs.widget(self.tabs.currentIndex()) is self.home: self._show_tab(self.night_view)
+    def _show_tab(self, inner):
+        for i in range(self.tabs.count()):
+            wdg = self.tabs.widget(i)
+            if wdg is inner or getattr(wdg, 'inner', None) is inner: self.tabs.setCurrentIndex(i); return
     def _home_action(self, a):
         if a == 'open': self.open_card()
-        elif a == 'synopsis': self.tabs.setCurrentWidget(self.synopsis)
-        elif a == 'landscape': self.tabs.setCurrentWidget(self.landscape)
-        elif a == 'ask': self.tabs.setCurrentWidget(self.ask); self.ask.key.setFocus()
+        elif a == 'synopsis': self._show_tab(self.synopsis)
+        elif a == 'landscape': self._show_tab(self.landscape)
+        elif a == 'ask': self._show_tab(self.ask); self.ask.key.setFocus()
         elif a == 'oximeter': self.import_oximeter()
         elif a == 'apple': self.import_apple()
     def _refresh_home(self):
@@ -439,7 +443,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.tabs.widget(i) is getattr(self, 'home', None): self._refresh_home()
         if self.tabs.widget(i) is getattr(self, 'notes', None): self.notes.refresh()
     def _continue_conversation(self, pairs):
-        self.ask.load_history(pairs); self.tabs.setCurrentWidget(self.ask)
+        self.ask.load_history(pairs); self._show_tab(self.ask)
     def _fill_events(self):
         nt = getattr(self, 'current', None)
         if nt is None: return
@@ -460,7 +464,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._ev_objs.append(e)
         self.ev_table.fill(rows)
     def _event_dbl(self, idx):
-        e = self._ev_objs[idx.row()]; self.tabs.setCurrentIndex(1); self.night_view.goto_event(e)
+        e = self._ev_objs[idx.row()]; self._show_tab(self.night_view); self.night_view.goto_event(e)
 
     # ------------------------------------------------------------------ oximeter and export
     def import_oximeter(self):
