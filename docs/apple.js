@@ -48,7 +48,12 @@ const AH = (() => {
     for (const k of ['hr', 'spo2', 'rr', 'hrv']) out[k].sort((a, b) => a[0] - b[0]); out.sleep.sort((a, b) => a.s - b.s);
     return out;
   }
-  function splitCsv(line) { const out = []; let cur = '', q = false; for (const ch of line) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; }
+  function splitCsv(line) {
+    const out = []; let cur = '', q = false; for (const ch of line) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur);
+    // Shortcuts' default date looks like "Nov 1, 2026 at 1:20 AM": the comma splits it. Re-join "Mon d" with the following ", yyyy ..." piece.
+    const m = []; for (let i = 0; i < out.length; i++) { const t = out[i].trim(); if (/^[A-Za-z]{3,9}\.? \d{1,2}$/.test(t) && i + 1 < out.length && /^\s*\d{4}/.test(out[i + 1])) { m.push(t + ', ' + out[i + 1].trim()); i++; } else m.push(out[i]); }
+    return m;
+  }
 
   /** Attach per-night summaries: night.apple = {stages, hr, spo2, asleep_h, deep_min, rem_min, core_min, awake_min, hr_mean, hr_min, spo2_min, spo2_mean, hrv, rr}. Returns nights matched. */
   function attach(data, nights) {
