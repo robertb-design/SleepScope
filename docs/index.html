@@ -100,7 +100,7 @@
 
 <section class="page" id="p-nights">
   <div class="banner" style="--c:#6250d6;--c2:#3d2f9b"><h2>Nights</h2><p>Tap a night for its detail. Charts pinch to zoom.</p></div>
-  <div class="card"><div id="ch-usage" class="chart"></div><div id="ch-ahi" class="chart"></div><div id="ch-leak" class="chart"></div></div>
+  <div class="card"><div id="ch-usage" class="chart"></div><div id="ch-ahi" class="chart"></div><div id="ch-leak" class="chart"></div><details><summary>What these charts mean, what stands out, what to improve</summary><div id="ovexplain"></div></details></div>
   <div class="card" style="padding:6px 0"><table id="nighttbl"><thead><tr><th>Night</th><th>Hours</th><th>Pressure setting</th><th>AHI</th><th>Leak 95</th><th>P 95</th></tr></thead><tbody></tbody></table></div>
   <div id="nightdetail"></div>
 </section>
@@ -137,6 +137,7 @@
 <script src="vendor/plotly.min.js"></script>
 <script src="engine.js"></script>
 <script src="apple.js"></script>
+<script src="explain.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

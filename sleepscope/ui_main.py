@@ -3,7 +3,7 @@ import os, sys, json, csv, datetime as dt
 import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets, QtGui
-from . import loader, scoring, synopsis, apple_health
+from . import loader, scoring, synopsis, apple_health, explain
 from .theme import C, EVENT_COLORS, style_plot
 from .ui_night import NightView
 from .ui_ask import AskView, AskWorker, build_context, SYSTEM as ASK_SYSTEM
@@ -67,10 +67,14 @@ class OverviewView(QtWidgets.QWidget):
     night_clicked = QtCore.Signal(int)
     def __init__(self):
         super().__init__(); lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(4, 4, 4, 4)
-        self.gl = pg.GraphicsLayoutWidget(); self.gl.setBackground('w'); lay.addWidget(self.gl)
+        split = QtWidgets.QSplitter(QtCore.Qt.Vertical); lay.addWidget(split, 1)
+        self.gl = pg.GraphicsLayoutWidget(); self.gl.setBackground('w'); split.addWidget(self.gl)
+        self.explain = QtWidgets.QTextBrowser(); self.explain.setStyleSheet('font-size:12.5px; padding:6px; border-top:1px solid #e6e5e2'); split.addWidget(self.explain)
+        split.setSizes([620, 260])
         self.note = QtWidgets.QLabel(''); self.note.setStyleSheet('color:#52514e'); lay.addWidget(self.note)
     def set_nights(self, nights):
         self.gl.clear(); self.nights = nights
+        self.explain.setHtml(("<p><b>What each chart means, what stands out, and what to do about it.</b></p>" + explain.overview(nights)) if nights else '')
         if not nights: return
         labs = [n.label for n in nights]; x = np.arange(len(nights)); S = [n.stats for n in nights]
         def g(k): return np.array([s.get(k, np.nan) for s in S], dtype=float)
