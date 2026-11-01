@@ -72,18 +72,19 @@
     <p>Two ways. <b>Quick:</b> a Shortcut that pulls the last 30 days straight from Health into a small file (build it once, instructions below). <b>Full:</b> Health app, profile picture, Export All Health Data, then pick export.zip here; it is scanned as a stream, so large exports are fine but take a minute or two.</p>
     <div class="row"><label class="btn" style="--c:#eda100;text-align:center">Import Health file<input type="file" id="applein" accept=".zip,.xml,.csv,.txt,text/csv,application/zip" style="display:none"></label><button class="ghost" onclick="document.getElementById('shortcuthelp').open=true;document.getElementById('shortcuthelp').scrollIntoView({behavior:'smooth'})">How to build the Shortcut</button></div>
     <div class="muted" id="applemsg"></div></div></div>
-  <div class="card"><details id="shortcuthelp"><summary>Build the SleepScope Health Shortcut (once, about two minutes)</summary><div class="syn">
-    <p>Open the <b>Shortcuts</b> app, tap <b>+</b>, name it <b>SleepScope Health</b>, then add these actions in order (type each name in the search box):</p>
+  <div class="card"><details id="shortcuthelp"><summary>Build the SleepScope Health Shortcut (once, five actions)</summary><div class="syn">
+    <p>A Shortcut is a small recipe you build by tapping. This one asks Health for your sleep records and writes them to a file. Five actions, all added the same way: tap <b>Add Action</b> (or the search box at the bottom), type the name, tap the result.</p>
+    <p><b>Set up:</b> open the <b>Shortcuts</b> app, tap <b>+</b> top right. Tap the name at the top and call it <b>SleepScope Health</b>.</p>
     <ol>
-      <li><b>Find Health Samples</b>. Set Type to <b>Sleep Analysis</b>. Add filter: Start Date <b>is in the last</b> 30 days. Sort by Start Date.</li>
-      <li><b>Repeat with Each</b> (it fills in the samples from step 1).</li>
-      <li>Inside the repeat: <b>Text</b>, containing exactly: <code>Sleep Analysis,</code> then tap to insert <b>Repeat Item</b> three times, and for each inserted item tap it and choose <b>Start Date</b>, <b>End Date</b>, <b>Value</b> respectively, with a comma between each. The line should read <code>Sleep Analysis,[Start Date],[End Date],[Value]</code>. For the two dates, tap the item, set Date Format to <b>Custom</b> and format string <code>yyyy-MM-dd HH:mm:ss</code>.</li>
-      <li><b>End Repeat</b> is added automatically. After it, add <b>Combine Text</b>, input Repeat Results, separator <b>New Lines</b>.</li>
-      <li>Repeat steps 1 to 4 for <b>Heart Rate</b> (put <code>Heart Rate,</code> at the start of the Text line), and again for <b>Blood Oxygen Saturation</b> (<code>Blood Oxygen,</code>). Heart rate has many samples; if the Shortcut gets slow, filter Start Date to the last 14 days.</li>
-      <li>Add one final <b>Combine Text</b> joining the three combined texts with New Lines, then <b>Save File</b> (service iCloud Drive, ask where to save on, name <code>sleepscope_health.csv</code>).</li>
+      <li><b>Find Health Samples</b>. In the action that appears, tap the blue <b>Type</b> word and choose <b>Sleep Analysis</b>. Tap <b>Add Filter</b>, set it to <b>Start Date</b> &nbsp;<b>is in the last</b>&nbsp; <b>30</b> &nbsp;<b>days</b>.</li>
+      <li><b>Repeat with Each</b>. It connects itself to the samples from step 1. Everything in steps 3 and 4 goes inside this block, between Repeat and End Repeat.</li>
+      <li><b>Text</b>. Type <code>Sleep,</code> then tap the <b>Repeat Item</b> chip in the variable bar above the keyboard. Type a comma, tap <b>Repeat Item</b> again, type a comma, tap <b>Repeat Item</b> a third time. Now tap the first chip and choose <b>Start Date</b>, the second and choose <b>End Date</b>, the third and choose <b>Value</b>. The line reads <code>Sleep,[Start Date],[End Date],[Value]</code>. Leave date formats as they are; SleepScope reads the default.</li>
+      <li><b>Add to Variable</b>. Name the variable <b>rows</b>. (Still inside the Repeat.)</li>
+      <li>After <b>End Repeat</b>: <b>Combine Text</b>. Tap its input and pick <b>rows</b>; set separator to <b>New Lines</b>. Then <b>Save File</b>: turn on <b>Ask Where To Save</b> and name it <code>sleepscope_health.txt</code>.</li>
     </ol>
-    <p>Run it, save the file, then tap <b>Import Health file</b> above and pick it. Run it again whenever you want fresh Watch data; it takes a few seconds. The first run asks permission to read Health; allow Sleep, Heart Rate and Blood Oxygen.</p>
-    <p class="muted">Why a Shortcut: only an app on the phone can read Health directly, and Shortcuts is Apple's own way to let you do that without writing an app. SleepScope never sees anything but the file you choose.</p>
+    <p><b>Run it:</b> tap the play button. First run, allow access to Sleep. Save the file to iCloud Drive or On My iPhone. Back in SleepScope, tap <b>Import Health file</b> and pick it. Run the Shortcut again any time for fresh nights; it takes a few seconds.</p>
+    <p><b>Optional, heart rate and blood oxygen:</b> duplicate steps 1 to 4 above the Combine Text, once with Type <b>Heart Rate</b> and the Text starting <code>Heart Rate,</code> and once with Type <b>Blood Oxygen Saturation</b> and the Text starting <code>Blood Oxygen,</code>. Add them to the same <b>rows</b> variable. Heart rate has many samples; use <b>last 14 days</b> for it.</p>
+    <p class="muted">Why a Shortcut: only an app on the phone can read Health directly, and Shortcuts is Apple's own way to do that without writing an app. SleepScope never sees anything but the file you choose.</p>
   </div></details></div>
   <div class="card"><details><summary>How to use, step by step</summary><div id="helptext" class="syn"></div></details></div>
   <p class="muted">SleepScope is a reading of the data, not a medical device. Nothing leaves this phone unless you use Ask Claude. The desktop version is at github.com/robertb-design/sleepscope.</p>
