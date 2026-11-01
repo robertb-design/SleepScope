@@ -81,13 +81,17 @@ class OverviewView(QtWidgets.QWidget):
         def plot(row, col, title, unit=''):
             p = self.gl.addPlot(row=row, col=col, axisItems={'bottom': BarAxis(labs, orientation='bottom')}); style_plot(p)
             p.setTitle(title, size='10pt', color='#0b0b0b'); p.setLabel('left', unit); p.setMouseEnabled(x=False, y=False); p.hideButtons()
-            p.getAxis('bottom').setTicks([[(i, labs[i]) for i in range(len(labs))]]); p.setXRange(-0.6, len(labs) - 0.4, padding=0)
+            ax = p.getAxis('bottom'); ax.setStyle(tickFont=QtGui.QFont('Segoe UI', 8), autoExpandTextSpace=True)
+            # thin the labels so they never overlap: short form past 6 nights, every k-th past 14
+            short = len(labs) > 6; k = max(1, int(np.ceil(len(labs) / 14)))
+            ticks = [(i, (labs[i].split(' ')[-1] if short else labs[i]) if i % k == 0 or i == len(labs) - 1 else '') for i in range(len(labs))]
+            ax.setTicks([ticks]); p.setXRange(-0.6, len(labs) - 0.4, padding=0)
             p.scene().sigMouseClicked.connect(lambda ev, p=p: self._click(ev, p)); return p
         def bars(p, vals, color, width=0.6, off=0.0, name=None):
             b = pg.BarGraphItem(x=x + off, height=np.nan_to_num(vals), width=width, brush=pg.mkBrush(color), pen=pg.mkPen('w'))
             p.addItem(b); return b
         # usage
-        p = plot(0, 0, 'Usage (hours)', 'h'); bars(p, g('hours'), C['blue']); p.setYRange(0, np.nanmax(g('hours')) * 1.2 + 0.5); p.addLine(y=4, pen=pg.mkPen(C['text2'], style=QtCore.Qt.DashLine))
+        p = plot(0, 0, 'Usage (hours)', 'h'); bars(p, g('hours'), C['blue']); p.setYRange(0, np.nanmax(g('hours')) * 1.35 + 0.5); p.addLine(y=4, pen=pg.mkPen(C['text2'], style=QtCore.Qt.DashLine))
         for i, v in enumerate(g('hours')):
             t = pg.TextItem(f'{v:.1f}', color=C['text2'], anchor=(0.5, 1)); t.setPos(i, v); p.addItem(t)
         # AHI machine vs app

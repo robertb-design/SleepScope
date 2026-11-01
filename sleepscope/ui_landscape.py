@@ -195,8 +195,9 @@ class LandscapeView(QtWidgets.QWidget):
                         sp = gl.GLScatterPlotItem(pos=pts, color=cols, size=6 + 4 * low.astype(float).max() if False else 6, pxMode=True, glOptions='translucent')
                         self.gl.addItem(sp); self.items.append(sp)
             # night label at the left end of the strip
-            lab = gl.GLTextItem(pos=(-14, ys[k], 0.5), text=nt.label, color=QtGui.QColor(C['text']), font=QtGui.QFont('Segoe UI', 9))
-            self.gl.addItem(lab); self.items.append(lab)
+            if N <= 14 or k % max(1, int(np.ceil(N / 14))) == 0:
+                lab = gl.GLTextItem(pos=(-14, ys[k], 0.5), text=nt.label if N <= 10 else nt.label.split(' ')[-1], color=QtGui.QColor(C['text']), font=QtGui.QFont('Segoe UI', 9))
+                self.gl.addItem(lab); self.items.append(lab)
         # clock labels along the front
         for hh in range(int(T_START), int(T_END) + 1, 2):
             x = (hh - T_START) * 3600 / BIN_S * 0.25

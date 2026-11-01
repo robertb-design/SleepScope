@@ -92,14 +92,15 @@ function appleSection(a, b) {
 }
 // ---------------------------------------------------------------- charts
 function drawOverview() {
-  const x = nights.map(n => SS.label(n.date)); const S = nights.map(n => n.stats); $('ovexplain').innerHTML = EX.overview(nights);
-  Plotly.react('ch-usage', [{ type: 'bar', x, y: nights.map(n => +n.hours.toFixed(2)), marker: { color: C.blue }, name: 'Hours' }], { title: { text: 'Usage (hours), dashed = 4 h', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 4, y1: 4, line: { dash: 'dash', color: '#52514e', width: 1 } }], yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -30 } }, { displayModeBar: false, responsive: true });
+  const k = Math.max(1, Math.ceil(nights.length / 10)); const x = nights.map((n, i) => (nights.length > 6 ? SS.label(n.date).split(' ').pop() : SS.label(n.date)));
+  const tickvals = x.filter((_, i) => i % k === 0 || i === x.length - 1); const S = nights.map(n => n.stats); $('ovexplain').innerHTML = EX.overview(nights);
+  Plotly.react('ch-usage', [{ type: 'bar', x, y: nights.map(n => +n.hours.toFixed(2)), marker: { color: C.blue }, name: 'Hours' }], { title: { text: 'Usage (hours), dashed = 4 h', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 4, y1: 4, line: { dash: 'dash', color: '#52514e', width: 1 } }], yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } } }, { displayModeBar: false, responsive: true });
   Plotly.react('ch-ahi', [
     { type: 'bar', x, y: S.map(s => +s.AHI.toFixed(2)), marker: { color: C.blue }, name: 'AHI machine' },
     { type: 'bar', x, y: S.map(s => +s.app_AHI.toFixed(2)), marker: { color: C.orange }, name: 'AHI app (flow only)' }],
-    { title: { text: 'AHI per night, dashed = 5', font: { size: 13 } }, barmode: 'group', margin: { l: 34, r: 10, t: 30, b: 60 }, legend: { orientation: 'h', y: -0.35, font: { size: 10 } }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -30 }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 5, y1: 5, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
+    { title: { text: 'AHI per night, dashed = 5', font: { size: 13 } }, barmode: 'group', margin: { l: 34, r: 10, t: 30, b: 60 }, legend: { orientation: 'h', y: -0.35, font: { size: 10 } }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 5, y1: 5, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
   Plotly.react('ch-leak', [{ type: 'bar', x, y: S.map(s => +s.leak_95.toFixed(1)), marker: { color: S.map(s => s.leak_95 > 24 ? C.red : C.aqua) }, name: 'Leak 95th' }],
-    { title: { text: 'Leak, 95th percentile (L/min), dashed = 24', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -30 }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 24, y1: 24, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
+    { title: { text: 'Leak, 95th percentile (L/min), dashed = 24', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 24, y1: 24, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
 }
 function fillNightTable() {
   const tb = $('nighttbl').tBodies[0]; tb.innerHTML = '';
