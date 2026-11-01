@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const C = { blue: '#2a78d6', green: '#1baf7a', violet: '#6250d6', orange: '#eb6834', red: '#e34948', amber: '#eda100', grey: '#8a8985', aqua: '#1baf7a' };
 const EVC = { 'Obstructive Apnea': C.red, 'Central Apnea': C.violet, 'Hypopnea': C.orange, 'Arousal': C.amber, 'Unclassified Apnea': C.grey, 'Apnea (unflagged by machine)': C.red, 'Flow Limitation Run': C.violet, 'Large Leak': C.orange };
-let nights = []; let history = []; let claudeBusy = false; let selectedNight = null; let strData = null;
+let nights = []; let history = []; let claudeBusy = false; let selectedNight = null; let strData = null; let autoOpenSynopsis = false;
 const store = { get: (k, d) => { try { const v = localStorage.getItem('ss_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem('ss_' + k, JSON.stringify(v)); } catch (e) {} } };
 
 // ---------------------------------------------------------------- navigation
@@ -47,9 +47,10 @@ function afterLoad() {
   const ox = nights.some(n => n.sessions.some(s => s.hasOx)); $('st5').textContent = ox ? '✔ Oximetry present' : 'Optional'; $('st5').className = 'status' + (ox ? ' ok' : '');
   const hrs = nights.reduce((a, n) => a + n.hours, 0); const ev = nights.reduce((a, n) => a + n.stats.OA + n.stats.CA + n.stats.H + n.stats.UA, 0);
   $('startsum').textContent = `Loaded: ${nights.length} nights, ${hrs.toFixed(1)} hours, machine AHI ${(ev / hrs).toFixed(1)}.`;
-  $('d0').value = nights[Math.max(0, nights.length - 30)].date; $('d1').value = last.date;
+  $('d0').value = last.date; $('d1').value = last.date;
   if (appleData) { const n = AH.attach(appleData, nights); if (n) { $('st6').textContent = '✔ Watch data present'; $('st6').className = 'status ok'; } }
   renderSynopsis(); fillNightTable(); if ($('p-nights').classList.contains('active')) drawOverview();
+  if (autoOpenSynopsis) { autoOpenSynopsis = false; go('syn'); }
 }
 $('filein').onchange = async (e) => { const list = [...e.target.files]; if (!list.length) return; try { const files = normalise(await filesFromInputs(list)); await loadFiles(files, list.length === 1 ? list[0].name : list.length + ' files'); try { await idb.put('last', { files, label: list.length === 1 ? list[0].name : list.length + ' files', when: Date.now() }); } catch (err) {} } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
 $('samplebtn').onclick = async () => { $('loadmsg').textContent = 'Fetching sample card…'; try { const r = await fetch('sample.zip'); const z = await JSZip.loadAsync(await r.arrayBuffer()); const files = {}; for (const [name, entry] of Object.entries(z.files)) if (!entry.dir && /\.edf$/i.test(name)) files[name] = await entry.async('arraybuffer'); await loadFiles(normalise(files), 'sample card'); } catch (e) { $('loadmsg').textContent = 'Sample not available offline yet: ' + e; } };
@@ -102,13 +103,13 @@ function drawOverview() {
 }
 function fillNightTable() {
   const tb = $('nighttbl').tBodies[0]; tb.innerHTML = '';
-  nights.forEach((n, i) => { const s = n.stats; const tr = document.createElement('tr'); tr.innerHTML = `<td>${SS.label(n.date)}</td><td>${n.hours.toFixed(2)}</td><td>${s.mode}</td><td>${s.AHI.toFixed(2)}</td><td>${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(1) : ''}</td><td>${Number.isFinite(s.press_95) ? s.press_95.toFixed(1) : ''}</td>`; tr.onclick = () => showNight(i); tb.appendChild(tr); });
+  nights.forEach((n, i) => { const s = n.stats; const tr = document.createElement('tr'); tr.innerHTML = `<td>${SS.label(n.date)}</td><td>${n.hours.toFixed(2)}</td><td>${SS.pressureLabel(s)}</td><td>${s.AHI.toFixed(2)}</td><td>${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(1) : ''}</td><td>${Number.isFinite(s.press_95) ? s.press_95.toFixed(1) : ''}</td>`; tr.onclick = () => showNight(i); tb.appendChild(tr); });
 }
 function showNight(i) {
   const n = nights[i]; const s = n.stats; selectedNight = n; $('landmode').value = 'night'; document.querySelectorAll('#nighttbl tbody tr').forEach((tr, k) => tr.classList.toggle('sel', k === i));
   const box = $('nightdetail'); box.innerHTML = `<div class="card"><h3 style="margin:0 0 6px">${new Date(n.date + 'T12:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3>
     <div class="row" style="gap:6px"><button style="--c:#6250d6;padding:4px 10px;font-size:12px" onclick="go('land')">View in 3D</button><span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span><span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span><span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}</div>
-    <div class="hl">SETTINGS &nbsp; ${SS.settingsText(SS.settingsSummary([n], strData))}</div><p class="muted" style="margin:8px 0 0">Sessions ${s.starts} to ${s.ends}. OA ${s.OA}, CA ${s.CA}, H ${s.H}, arousals ${s.arousals}. RR ${s.rr_med.toFixed(0)}, Vt ${s.tv_med.toFixed(0)} mL, MV ${s.mv_med.toFixed(1)}.</p></div>
+    <div class="hl">SETTINGS &nbsp; ${SS.settingsText(SS.settingsSummary([n], strData))}</div><p class="muted" style="margin:8px 0 0">Sessions: ${n.sessions.map(x => { const pr = x.ch.Press; if (!pr || !pr.length) return SS.fmtTime(x.start); const skip = Math.max(Math.floor(pr.length * 0.15), Math.min(900, pr.length >> 1)); const t = pr.subarray(skip); let m = 0; for (const v of t) m += v; m /= t.length || 1; let sd = 0; for (const v of t) sd += (v - m) ** 2; sd = Math.sqrt(sd / (t.length || 1)); let lo = Infinity, hi = -Infinity; for (const v of pr) { if (v < lo) lo = v; if (v > hi) hi = v; } return `${SS.fmtTime(x.start)} (${sd < 0.05 ? 'CPAP ' + hi.toFixed(0) : lo.toFixed(0) + ' to ' + hi.toFixed(0)})`; }).join(', ')}. OA ${s.OA}, CA ${s.CA}, H ${s.H}, arousals ${s.arousals}. RR ${s.rr_med.toFixed(0)}, Vt ${s.tv_med.toFixed(0)} mL, MV ${s.mv_med.toFixed(1)}.</p></div>
     <div class="card"><div id="ch-night" style="width:100%;height:${520 + (Number.isFinite(s.spo2_mean) ? 100 : 0) + (n.apple && n.apple.stages.length ? 200 : 0)}px"></div><div class="key"><span><i style="background:${C.red}"></i>obstructive</span><span><i style="background:${C.violet}"></i>central</span><span><i style="background:${C.orange}"></i>hypopnea</span><span><i style="background:${C.amber}"></i>arousal</span><span>lighter bands = app events</span></div></div>
     <div class="card"><b>Events</b> <span class="muted">(tap one to see the airflow around it)</span><div id="evlist"></div></div><div class="card" id="zoomcard" style="display:none"><div id="ch-zoom" style="width:100%;height:240px"></div><div class="muted" id="zoomnote"></div></div>`;
   box.scrollIntoView({ behavior: 'smooth' });
@@ -263,5 +264,5 @@ $('helptext').innerHTML = `
 (async () => {
   if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js'); } catch (e) {} }
   try { const ap = await idb.get('apple'); if (ap) appleData = AH.unpack(ap); } catch (e) {}
-  try { const last = await idb.get('last'); if (last && last.files) { $('loadmsg').textContent = 'Reloading ' + last.label + ' from last time…'; await loadFiles(last.files, last.label); } } catch (e) {}
+  try { const last = await idb.get('last'); if (last && last.files) { autoOpenSynopsis = true; $('loadmsg').textContent = 'Reloading ' + last.label + ' from last time…'; await loadFiles(last.files, last.label); } } catch (e) {}
 })();

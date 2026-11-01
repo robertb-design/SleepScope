@@ -120,6 +120,7 @@ const SS = (() => {
       ODI: spv.length > 600 ? odi / (spv.length / 3600) : NaN, pulse_mean: puv.length ? mean(puv) : NaN, pulse_min: puv.length ? Math.min(...puv) : NaN,
     };
   }
+  function pressureLabel(st) { const lo = st.press_min, hi = st.press_max; if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ''; return st.mode === 'CPAP' ? `CPAP ${hi.toFixed(0)}` : `AutoSet ${lo.toFixed(0)} to ${hi.toFixed(0)}`; }
   function fmtTime(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
   function label(dateStr) { const [y, m, d] = dateStr.split('-').map(Number); const dt = new Date(y, m - 1, d); return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' }); }
 
@@ -227,6 +228,6 @@ const SS = (() => {
     return parts.join(' &nbsp;·&nbsp; ');
   }
   function validation(nights) { let total = 0, hit = 0; for (const nt of nights) for (const s of nt.sessions) for (const m of s.machine) { if (!/Apnea/.test(m.label)) continue; total++; if (s.app.some(e => /Apnea/.test(e.label) && e.start >= new Date(m.start.getTime() - 15000) && m.start <= new Date(e.start.getTime() + e.dur * 1000 + 5000))) hit++; } return [total, hit]; }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

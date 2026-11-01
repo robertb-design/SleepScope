@@ -92,7 +92,7 @@
 <section class="page" id="p-syn">
   <div class="banner" style="--c:#1baf7a;--c2:#0f6e4f"><h2>Synopsis</h2><p>Pick a range. The rule based report is computed on the phone; Claude's reading follows if a key is saved.</p></div>
   <div class="card"><div class="row"><div><label class="f">From</label><input type="date" id="d0"></div><div><label class="f">To</label><input type="date" id="d1"></div></div>
-    <div class="row" style="margin-top:8px"><button class="ghost" onclick="quick(7)">Last 7</button><button class="ghost" onclick="quick(14)">Last 14</button><button class="ghost" onclick="quick(30)">Last 30</button><button class="ghost" onclick="quick(0)">All</button></div>
+    <div class="row" style="margin-top:8px"><button class="ghost" onclick="quick(1)">Last night</button><button class="ghost" onclick="quick(7)">Last 7</button><button class="ghost" onclick="quick(14)">Last 14</button><button class="ghost" onclick="quick(30)">Last 30</button><button class="ghost" onclick="quick(0)">All</button></div>
     <label class="f">Diagnostic AHI from your sleep study (optional)</label><input type="number" id="diag" placeholder="e.g. 35" inputmode="decimal"></div>
   <div class="card syn" id="syntext"><p class="muted">Load data to see the synopsis.</p></div>
   <div class="card"><div class="row" style="justify-content:space-between"><b style="color:var(--orange)">Claude's reading</b><button style="--c:#eb6834" id="claudesyn">Ask Claude now</button></div><div class="claude" id="claudetext"><p class="muted">Save an API key on the Ask tab. Claude then writes its own account of the selected range: what the data shows, what it means, what to ask the prescriber. Runs by itself when data loads; the same data is not sent twice.</p></div><div class="muted" id="claudestatus"></div></div>
@@ -101,7 +101,7 @@
 <section class="page" id="p-nights">
   <div class="banner" style="--c:#6250d6;--c2:#3d2f9b"><h2>Nights</h2><p>Tap a night for its detail. Charts pinch to zoom.</p></div>
   <div class="card"><div id="ch-usage" class="chart"></div><div id="ch-ahi" class="chart"></div><div id="ch-leak" class="chart"></div></div>
-  <div class="card" style="padding:6px 0"><table id="nighttbl"><thead><tr><th>Night</th><th>Hours</th><th>Mode</th><th>AHI</th><th>Leak 95</th><th>P 95</th></tr></thead><tbody></tbody></table></div>
+  <div class="card" style="padding:6px 0"><table id="nighttbl"><thead><tr><th>Night</th><th>Hours</th><th>Pressure setting</th><th>AHI</th><th>Leak 95</th><th>P 95</th></tr></thead><tbody></tbody></table></div>
   <div id="nightdetail"></div>
 </section>
 
