@@ -84,7 +84,11 @@ class LandscapeView(QtWidgets.QWidget):
             return
         self.gl = gl.GLViewWidget(); self.gl.setBackgroundColor('#fcfcfb')
         mid = QtWidgets.QHBoxLayout(); mid.setSpacing(6); lay.addLayout(mid, 1); mid.addWidget(self.gl, 1); mid.addWidget(LandscapeKey(), 0, QtCore.Qt.AlignTop)
-        self.gl.setToolTip('Drag to rotate, wheel to zoom, middle drag or Ctrl+drag to pan')
+        self.gl.setToolTip('Click any pillar, pool or patch of terrain for a plain language explanation. Drag to rotate, wheel to zoom.')
+        self.gl.installEventFilter(self); self._press_pos = None
+        self.popup = QtWidgets.QLabel(self.gl); self.popup.setWordWrap(True); self.popup.setTextFormat(QtCore.Qt.RichText); self.popup.setVisible(False)
+        self.popup.setStyleSheet('background:#ffffff; border:1px solid #2a78d6; border-left:6px solid #2a78d6; border-radius:8px; padding:10px 12px; font-size:12.5px; color:#0b0b0b'); self.popup.setFixedWidth(360)
+        self.popup.mousePressEvent = lambda ev: self.popup.setVisible(False)
         self.items = []
 
     def set_nights(self, nights):
@@ -103,7 +107,7 @@ class LandscapeView(QtWidgets.QWidget):
         for it in self.items:
             try: self.gl.removeItem(it)
             except Exception: pass
-        self.items = []
+        self.items = []; self.pick_pts = []   # (x, y, z, kind, ctx)
         m = self.mode.currentIndex()
         if m == 1 and self.selected is not None: nights = [self.selected]
         elif m == 0 and self.range: nights = [n for n in self.nights if self.range[0] <= n.date <= self.range[1]] or self.nights[-14:]
@@ -115,7 +119,16 @@ class LandscapeView(QtWidgets.QWidget):
         strip_w = 5.0
         # per night: terrain as a narrow surface (3 rows: front edge, centre, back edge) so strips read as ribbons with gaps
         for k, nt in enumerate(nights):
-            op, lk, pr = night_grids(nt)
+            op, lk, pr = night_grids(nt); y0 = ys[k]
+            base_dt = dt.datetime.combine(nt.date, dt.time(0)) + dt.timedelta(hours=T_START)
+            for i in range(0, W, 2):
+                tm = (base_dt + dt.timedelta(seconds=i * BIN_S)).strftime('%H:%M')
+                if np.isnan(op[i]): self.pick_pts.append((xs[i], y0, -0.15 * Z_SCALE, 'floor', dict(night=nt.label, time=tm)))
+                else:
+                    opi = float(np.clip(op[i], 0, 1)); lki = float(lk[i]) if not np.isnan(lk[i]) else 0.0; pri = float(pr[i]) if not np.isnan(pr[i]) else None
+                    self.pick_pts.append((xs[i], y0, opi * Z_SCALE, 'terrain', dict(night=nt.label, time=tm, openness=opi, fl=round(max(0.0, 1 - opi), 2), leak=lki, press=pri)))
+                    if lki > 24: self.pick_pts.append((xs[i], y0, 0.55 * Z_SCALE, 'water', dict(night=nt.label, time=tm, leak=lki)))
+                    if pri is not None: self.pick_pts.append((xs[i], y0, Z_SCALE * (1.15 + (pri - 4) / 12), 'pressure', dict(night=nt.label, time=tm, press=pri)))
             z = np.where(np.isnan(op), -0.15, np.clip(op, 0, 1)) * Z_SCALE
             col = terrain_colour(np.where(np.isnan(op), 0.0, np.clip(op, 0, 1)))
             col[np.isnan(op)] = _hex('#c9c8c3')                 # floor grey for mask off
@@ -156,6 +169,8 @@ class LandscapeView(QtWidgets.QWidget):
                     x = b * 0.25; z0 = zz[int(b)]
                     h = Z_SCALE * (0.9 if 'Apnea' in e.label else 0.6)
                     seg = np.array([[x, ys[k], max(z0, 0)], [x, ys[k], max(z0, 0) + h]])
+                    bi = int(b); self.pick_pts.append((x, ys[k], max(z0, 0) + h, 'event', dict(night=nt.label, time=e.start.strftime('%H:%M'), label=e.label, dur=e.duration, press=float(pr[bi]) if not np.isnan(pr[bi]) else None, leak=float(lk[bi]) if not np.isnan(lk[bi]) else None, at_ceiling=(not np.isnan(pr[bi]) and nt.stats.get('mode') == 'AutoSet' and pr[bi] >= nt.stats.get('press_max', 99) - 0.1))))
+                    self.pick_pts.append((x, ys[k], max(z0, 0) + h / 2, 'event', self.pick_pts[-1][4]))
                     pil = gl.GLLinePlotItem(pos=seg, color=_hex(colr), width=4, antialias=True, mode='lines', glOptions='opaque')
                     self.gl.addItem(pil); self.items.append(pil)
                     cap = gl.GLScatterPlotItem(pos=seg[1:2], color=_hex(colr), size=9, pxMode=True, glOptions='opaque')
@@ -174,6 +189,8 @@ class LandscapeView(QtWidgets.QWidget):
                     Cr = np.zeros((W, 3, 4))
                     for bb in range(W): Cr[bb, :] = stage_col.get(stage_of[bb], _hex('#c9c8c3')) if has[bb] else _hex('#c9c8c3', 0.0)
                     yr = np.array([ys[k] - strip_w / 2 - 1.9, ys[k] - strip_w / 2 - 1.1, ys[k] - strip_w / 2 - 0.3])
+                    for i in range(0, W, 2):
+                        if has[i]: self.pick_pts.append((xs[i], y0 - strip_w / 2 - 1.1, 0.25 * Z_SCALE, 'stage', dict(night=nt.label, time=(base_dt + dt.timedelta(seconds=i * BIN_S)).strftime('%H:%M'), stage=str(stage_of[i]))))
                     rib = gl.GLSurfacePlotItem(x=xs, y=yr, z=Zr, colors=Cr, shader='shaded', smooth=True, glOptions='translucent')
                     self.gl.addItem(rib); self.items.append(rib)
                 if ap.get('hr'):
@@ -213,6 +230,34 @@ class LandscapeView(QtWidgets.QWidget):
         self.highlight.setText('<b>SETTINGS</b> &nbsp; ' + _sc.settings_text(_sc.settings_summary(nights, self.str_data)))
         self.view_overview()
 
+    # ------------------------------------------------------------------ picking
+    def eventFilter(self, obj, ev):
+        if obj is getattr(self, 'gl', None):
+            if ev.type() == QtCore.QEvent.MouseButtonPress: self._press_pos = ev.position() if hasattr(ev, 'position') else ev.pos()
+            elif ev.type() == QtCore.QEvent.MouseButtonRelease and self._press_pos is not None:
+                p = ev.position() if hasattr(ev, 'position') else ev.pos()
+                if (p - self._press_pos).manhattanLength() < 4: self._pick(p)
+                self._press_pos = None
+        return super().eventFilter(obj, ev)
+    def _pick(self, pos):
+        if not getattr(self, 'pick_pts', None): return
+        from . import explain as _ex
+        w, h = self.gl.width(), self.gl.height(); dpr = self.gl.devicePixelRatioF()
+        vp = self.gl.getViewport(); mvp = self.gl.projectionMatrix(vp, vp) * self.gl.viewMatrix()
+        pts = np.array([[x, y, z] for x, y, z, _, _ in self.pick_pts], dtype=float)
+        best = None; bestd = 1e9
+        for i, (x, y, z) in enumerate(pts):
+            v = mvp.map(QtGui.QVector4D(x, y, z, 1.0))
+            if v.w() <= 0: continue
+            sx = (v.x() / v.w() * 0.5 + 0.5) * w; sy = (1 - (v.y() / v.w() * 0.5 + 0.5)) * h
+            d = (sx - pos.x()) ** 2 + (sy - pos.y()) ** 2
+            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0}[kind]   # favour pillars when close
+            if d < bestd: bestd = d; best = i
+        if best is None or bestd > 30 ** 2: self.popup.setVisible(False); return
+        x, y, z, kind, ctx = self.pick_pts[best]
+        self.popup.setText(_ex.point(kind, **ctx) + "<br><span style='color:#8a8985;font-size:11px'>click to close</span>")
+        self.popup.adjustSize(); px = int(min(max(8, pos.x() + 14), w - self.popup.width() - 8)); py = int(min(max(8, pos.y() - self.popup.height() - 10), h - self.popup.height() - 8))
+        self.popup.move(px, py); self.popup.setVisible(True); self.popup.raise_()
     def view_overview(self):
         if HAVE_GL: self.gl.setCameraPosition(pos=self.center, distance=self.extent * 1.25, elevation=32, azimuth=-110)
     def view_along(self):

@@ -41,7 +41,7 @@ HELP = """
 <h2>Step 4. Read your results</h2>
 <ol>
 <li><b>Synopsis</b>: pick a date range (Last 7, Last 14, Last 30 or All) and read. It covers hours used, event control, event mix, settings changes, leak, flow limitation, breathing, oxygen and what to raise with the prescriber. Type your diagnostic AHI from the sleep study into the box to see the percent reduction. <b>Save HTML</b> or <b>Copy</b> to hand it to the doctor.</li>
-<li><b>3D Landscape</b>: the week as terrain. Height is how freely you breathed; red pillars are events; blue pools are leak; grey is mask off. The key on the right explains each colour. Drag to rotate, wheel to zoom.</li>
+<li><b>3D Landscape</b>: the week as terrain. Height is how freely you breathed; red pillars are events; blue pools are leak; grey is mask off. The key on the right explains each colour. Click any pillar, pool or patch of ground and a box explains it in plain language. Drag to rotate, wheel to zoom.</li>
 <li><b>Night</b>: click a night on the left. Use <b>◀ event / event ▶</b> to jump between events, the zoom buttons for 30 s to a whole night, and hover for every value at the cursor.</li>
 <li><b>Statistics</b>: every number for every night; <b>Export statistics CSV</b> for a spreadsheet.</li>
 </ol>

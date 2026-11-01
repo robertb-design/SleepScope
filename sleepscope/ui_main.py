@@ -334,7 +334,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'), 'How to use')
         self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(Page(self.overview, 'Overview', 'Trends across nights. Click a bar to open that night.', '#2a78d6'), 'Overview')
         self.synopsis = SynopsisView(); self.tabs.addTab(Page(self.synopsis, 'Synopsis', 'Plain English report for any date range, with Claude\'s reading beside it.', '#1baf7a'), 'Synopsis')
-        self.landscape = LandscapeView(); self.synopsis.on_range = lambda a, b: self.landscape.set_range(a, b); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed; the key on the right explains the rest.', '#6250d6'), '3D Landscape')
+        self.landscape = LandscapeView(); self.synopsis.on_range = lambda a, b: self.landscape.set_range(a, b); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed. Click any pillar, pool or patch of ground for a plain language explanation.', '#6250d6'), '3D Landscape')
         self.ask = AskView(); self.tabs.addTab(Page(self.ask, 'Ask Claude', 'Questions about your results, answered from your numbers and saved for later.', '#eb6834'), 'Ask Claude')
         self.notes = NotesView(); self.tabs.addTab(Page(self.notes, 'Saved answers', 'Everything Claude has written for you, searchable.', '#d95926'), 'Saved answers')
         self.notes.continue_requested.connect(self._continue_conversation)

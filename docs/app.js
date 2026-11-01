@@ -177,29 +177,46 @@ function drawLandscape() {
   const scale = [[0, '#c9c8c3'], [0.165, '#c9c8c3'], [0.1667, '#e34948'], [0.5, '#eda100'], [1, '#1baf7a']]; // value -0.2 .. 1 : grey floor then red->yellow->green
   const pil = { 'Obstructive Apnea': { x: [], y: [], z: [], c: C.red }, 'Central Apnea': { x: [], y: [], z: [], c: C.violet }, 'Hypopnea': { x: [], y: [], z: [], c: C.orange } };
   sel.forEach((n, k) => {
-    const { op, lk, pr, base } = nightGrids(n); const y0 = k * gap;
+    const { op, lk, pr, base } = nightGrids(n); const y0 = k * gap; landGrids[k] = { op, lk, pr, base, n };
     const z = op.map(v => Number.isNaN(v) ? -0.15 * LB.Z : Math.min(1, Math.max(0, v)) * LB.Z); const col = op.map(v => Number.isNaN(v) ? -0.2 : Math.min(1, Math.max(0, v)));
     const zz = z.map((v, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(W - 1, i + 2); j++) { a += z[j]; c++; } return a / c; });
-    traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'skip', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date) });
-    const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'skip' });
+    traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'none', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date), meta: { kind: 'terrain', k } });
+    const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'none', meta: { kind: 'water', k } });
     const px = [], pz = []; pr.forEach((v, i) => { if (!Number.isNaN(v)) { px.push(xs[i]); pz.push(LB.Z * (1.15 + (v - 4) / 12)); } else { px.push(null); pz.push(null); } });
-    traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#ffffff', width: 3 }, hoverinfo: 'skip', name: 'pressure' });
+    traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#ffffff', width: 3 }, hoverinfo: 'none', name: 'pressure', meta: { kind: 'pressure', k } });
     if (n.apple && n.apple.stages.length) {
       const stageCol = { Deep: 0.1, Core: 0.35, Asleep: 0.35, REM: 0.6, Awake: 0.85, InBed: 1.0 }; const rib = new Array(W).fill(null); const rc = new Array(W).fill(0);
       for (const r of n.apple.stages) { const b0 = Math.max(0, Math.floor((r.s - base) / 1000 / LB.bin)), b1 = Math.min(W, Math.ceil((r.e - base) / 1000 / LB.bin)); for (let b = b0; b < b1; b++) { if (r.stage === 'InBed' && rib[b] !== null) continue; rib[b] = 0.25 * LB.Z; rc[b] = stageCol[r.stage] ?? 0.35; } }
-      traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2 - 1.9, y0 - sw / 2 - 1.1, y0 - sw / 2 - 0.3], z: [rib, rib, rib], surfacecolor: [rc, rc, rc], colorscale: [[0, '#0f6e4f'], [0.3, '#2a78d6'], [0.5, '#2a78d6'], [0.7, '#6250d6'], [0.9, '#eb6834'], [1, '#d9d8d3']], cmin: 0, cmax: 1, showscale: false, hoverinfo: 'skip', opacity: 0.95 });
+      traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2 - 1.9, y0 - sw / 2 - 1.1, y0 - sw / 2 - 0.3], z: [rib, rib, rib], surfacecolor: [rc, rc, rc], colorscale: [[0, '#0f6e4f'], [0.3, '#2a78d6'], [0.5, '#2a78d6'], [0.7, '#6250d6'], [0.9, '#eb6834'], [1, '#d9d8d3']], cmin: 0, cmax: 1, showscale: false, hoverinfo: 'none', opacity: 0.95, meta: { kind: 'stage', k } }); landStages[k] = rc.map((v, i) => rib[i] === null ? '' : ({ 0.1: 'Deep', 0.35: 'Core', 0.6: 'REM', 0.85: 'Awake', 1.0: 'InBed' }[v] || 'Asleep'));
       if (n.apple.hr.length) { const hx = [], hz = []; for (const [t, v] of n.apple.hr) { const b = (t - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; hx.push(b * 0.25); hz.push(LB.Z * (1.6 + (v - 40) / 80)); } traces.push({ type: 'scatter3d', mode: 'lines', x: hx, y: hx.map(() => y0 - sw / 2 - 1.1), z: hz, line: { color: C.red, width: 2 }, hoverinfo: 'skip' }); }
     }
-    for (const s of n.sessions) for (const e of s.machine) { const g = pil[e.label]; if (!g) continue; const b = (e.start.getTime() - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; const x = b * 0.25, z0 = Math.max(0, zz[Math.floor(b)]); const h = LB.Z * (/Apnea/.test(e.label) ? 0.9 : 0.6); g.x.push(x, x, null); g.y.push(y0, y0, null); g.z.push(z0, z0 + h, null); (g.sz ||= []).push(0, 4, 0); }
+    for (const s of n.sessions) for (const e of s.machine) { const g = pil[e.label]; if (!g) continue; const b = (e.start.getTime() - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; const x = b * 0.25, z0 = Math.max(0, zz[Math.floor(b)]); const h = LB.Z * (/Apnea/.test(e.label) ? 0.9 : 0.6); g.x.push(x, x, null); g.y.push(y0, y0, null); g.z.push(z0, z0 + h, null); (g.sz ||= []).push(0, 4, 0); const bi = Math.floor(b); (g.ev ||= []).push({ night: SS.label(n.date), time: hm(e.start), label: e.label, dur: e.duration, press: Number.isNaN(pr[bi]) ? null : pr[bi], leak: Number.isNaN(lk[bi]) ? null : lk[bi], at_ceiling: !Number.isNaN(pr[bi]) && n.stats.mode === 'AutoSet' && pr[bi] >= (n.stats.press_max ?? 99) - 0.1 }); }
   });
-  for (const [lab, g] of Object.entries(pil)) if (g.x.length) traces.push({ type: 'scatter3d', mode: 'lines+markers', x: g.x, y: g.y, z: g.z, line: { color: g.c, width: 6 }, marker: { color: g.c, size: g.sz }, name: lab, hoverinfo: 'name' });
+  for (const [lab, g] of Object.entries(pil)) if (g.x.length) traces.push({ type: 'scatter3d', mode: 'lines+markers', x: g.x, y: g.y, z: g.z, line: { color: g.c, width: 6 }, marker: { color: g.c, size: g.sz }, name: lab, hoverinfo: 'none', meta: { kind: 'event', ev: g.ev } });
   const ticks = []; for (let h = LB.t0; h <= LB.t1; h += 2) ticks.push(h);
   const layout = { margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false, paper_bgcolor: '#f6f5f2', annotations: [{ text: N === 1 ? SS.label(sel[0].date) : `${N} nights, ${SS.label(sel[N - 1].date)} to ${SS.label(sel[0].date)}`, xref: 'paper', yref: 'paper', x: 0, y: 1, showarrow: false, font: { size: 12, color: '#52514e' } }], scene: {
       xaxis: { tickvals: ticks.map(h => (h - LB.t0) * 3600 / LB.bin * 0.25), ticktext: ticks.map(h => `${String(h % 24).padStart(2, '0')}:00`), title: { text: '' }, showbackground: false, showgrid: false, zeroline: false, showspikes: false },
       yaxis: { tickvals: sel.map((_, k) => k * gap), ticktext: sel.map(n => SS.label(n.date)), title: { text: '' }, showbackground: false, showgrid: false, zeroline: false, showspikes: false },
       zaxis: { visible: false, range: [-2, 2.6 * LB.Z], showspikes: false }, aspectmode: 'manual', aspectratio: { x: 2.2, y: Math.max(0.6, 0.11 * N), z: 0.45 }, camera: cams(N)[landCam], dragmode: 'orbit' } };
   $('landhl').innerHTML = 'SETTINGS &nbsp; ' + SS.settingsText(SS.settingsSummary(sel, strData));
-  Plotly.react('ch-land', traces, layout, { displayModeBar: false, responsive: true });
+  landGrids.length = N; landStages.length = N; $('landpop').style.display = 'none';
+  Plotly.react('ch-land', traces, layout, { displayModeBar: false, responsive: true }).then(gd => { if (!gd._ssPick) { gd._ssPick = true; gd.on('plotly_click', landClick); } });
+}
+const landGrids = [], landStages = [];
+function hm(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+function landClick(ev) {
+  const p = ev.points && ev.points[0]; if (!p) return; const meta = p.data.meta || {}; let html = '';
+  if (meta.kind === 'event') { const c = meta.ev[Math.floor(p.pointNumber / 3)]; if (c) html = EX.point('event', c); }
+  else if (meta.kind) {
+    const g = landGrids[meta.k]; if (!g) return; const i = Math.min(LB.n - 1, Math.max(0, Math.round(p.x / 0.25)));
+    const time = hm(new Date(g.base + i * LB.bin * 1000)), night = SS.label(g.n.date);
+    const op = g.op[i], lk = Number.isNaN(g.lk[i]) ? 0 : g.lk[i], pr = Number.isNaN(g.pr[i]) ? null : g.pr[i];
+    if (meta.kind === 'terrain') html = Number.isNaN(op) ? EX.point('floor', { night, time }) : EX.point('terrain', { night, time, openness: Math.min(1, Math.max(0, op)), leak: lk, press: pr });
+    else if (meta.kind === 'water') html = EX.point('water', { night, time, leak: lk });
+    else if (meta.kind === 'pressure') html = EX.point('pressure', { night, time, press: pr ?? 0 });
+    else if (meta.kind === 'stage') html = EX.point('stage', { night, time, stage: (landStages[meta.k] || [])[i] || 'Asleep' });
+  }
+  if (!html) return; const el = $('landpop'); el.innerHTML = html + '<div style="color:#8a8985;font-size:11px;margin-top:4px">tap to close</div>'; el.style.display = 'block';
 }
 function cams(N) { const c = { x: 0, y: 0, z: 0 }; return { over: { eye: { x: -0.85, y: -1.75, z: 1.05 }, center: { x: 0, y: 0, z: 0.05 } }, along: { eye: { x: -1.9, y: -0.4, z: 0.35 }, center: { x: 0, y: 0, z: -0.1 } }, top: { eye: { x: 0, y: -0.01, z: 1.9 }, center: c } }; }
 function landView(v) { landCam = v; drawLandscape(); }

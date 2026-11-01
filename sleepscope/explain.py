@@ -165,3 +165,44 @@ def night(nt) -> str:
         else: imp.append("The machine covered the sleep the Watch saw. Compare deep and REM minutes across nights with and without leak; treated sleep should show more of both.")
         out.append(_block('Apple Watch', "Sleep stages from the Watch (motion and heart rate, not EEG, so approximate), its heart rate, and its SpO2 spot checks.", found, imp))
     return "<div style='font-size:12.5px;line-height:1.4'>" + ''.join(out) + "</div>"
+
+
+# ----------------------------------------------------------------------------- click explanations for the 3D landscape
+EVENT_WORDS = {
+    'Obstructive Apnea': ("Obstructive apnea", "the airway closed completely for {dur:.0f} seconds while you kept trying to breathe. Airflow stopped, then restarted with a bigger breath. One or two a night is normal; a cluster at one time of night usually means back sleeping or REM, and a cluster at a low pressure means the pressure was short.", "If these line up with a low pressure or sit at the ceiling, that is the case for a higher setting; raise it with the prescriber. If they cluster in one stretch, try side sleeping."),
+    'Central Apnea': ("Central apnea", "breathing paused for {dur:.0f} seconds with the airway open: the brain simply did not send the signal. After a sigh or an arousal this is normal physiology and harmless.", "Nothing to do for a few scattered ones. If centrals start to outnumber obstructives, or come in waves, that is a question for the sleep physician, not a setting change."),
+    'Hypopnea': ("Hypopnea", "airflow dropped by about a third or more for at least ten seconds without stopping: the airway narrowed, not closed.", "Hypopneas respond to a slightly higher minimum pressure or to less EPR; a prescriber conversation. Check leak at the same moment first, since leak can create them."),
+    'Unclassified Apnea': ("Apnea", "airflow stopped for {dur:.0f} seconds; the machine could not tell whether the airway was closed or open.", "Look at the raw flow around it in the Night tab."),
+    'Arousal': ("Arousal", "a brief wake-up the machine inferred from a sudden change in breathing.", "A few per hour are normal. Many, with low AHI, point at flow limitation or leak as the thing disturbing sleep."),
+}
+
+
+def point(kind, **c) -> str:
+    """Plain language for a clicked element. kind: 'event' | 'terrain' | 'floor' | 'water' | 'pressure' | 'stage'."""
+    t = c.get('time', ''); n = c.get('night', '')
+    if kind == 'event':
+        name, what, do = EVENT_WORDS.get(c['label'], (c['label'], 'an event the machine flagged.', ''))
+        head = f"<b>{name}</b>, {n} at {t}"
+        body = what.format(dur=c.get('dur', 0))
+        extra = []
+        if c.get('press') is not None: extra.append(f"Pressure at the time {c['press']:.1f} cmH2O" + (" (at the ceiling)" if c.get('at_ceiling') else ""))
+        if c.get('leak') is not None: extra.append(f"leak {c['leak']:.0f} L/min" + (" (large)" if c['leak'] > 24 else ""))
+        return f"{head}<br>{body}" + (f"<br><i>{', '.join(extra)}.</i>" if extra else '') + f"<br><b>What to do:</b> {do}"
+    if kind == 'floor':
+        return f"<b>Mask off</b>, {n} at {t}<br>Grey floor means no therapy was running: the mask was off, or the machine was not on. Sleep during this time is untreated, the same as before you had the machine.<br><b>What to do:</b> if this is mid-night, note what woke you; if it is the start or end of the night, it is the difference between time in bed and time on therapy."
+    if kind == 'water':
+        return f"<b>Large leak</b>, {n} at {t}: {c.get('leak', 0):.0f} L/min<br>Air was escaping faster than the machine can compensate (over 24 L/min). It cannot hold its pressure or score events reliably in a pool like this, so therapy is being lost here, not just data.<br><b>What to do:</b> a pool that starts mid-night and holds is mouth opening (chin strap, mouth tape, or a full-face mask). One that comes and goes is the cushion shifting; re-seat it lying in your sleeping position and loosen rather than tighten."
+    if kind == 'pressure':
+        return f"<b>Pressure</b>, {n} at {t}: {c.get('press', 0):.1f} cmH2O<br>The white line is what the machine was delivering. On AutoSet it climbs when it senses narrowing and drifts back down when breathing is easy; a line that sits flat against the top is the machine pinned at its ceiling.<br><b>What to do:</b> nothing for the line itself. If it is at the ceiling while pillars or yellow terrain appear, the maximum is a step low; raise it with the prescriber."
+    if kind == 'stage':
+        st = c.get('stage', '')
+        words = {'Deep': 'Deep sleep, the physically restorative kind. Adults get most of it in the first half of the night.', 'Core': 'Core (light) sleep, the bulk of a normal night.', 'REM': 'REM, dreaming sleep, when muscles relax most and the airway is at its floppiest; events often cluster here.', 'Awake': 'Awake, as judged by the Watch from movement and heart rate.', 'InBed': 'In bed but not asleep.', 'Asleep': 'Asleep (the Watch did not separate stages).'}.get(st, st)
+        return f"<b>Apple Watch: {st}</b>, {n} at {t}<br>{words}<br>Ribbon over grey floor is sleep with the mask off: untreated sleep.<br><b>What to do:</b> the ribbon should be covered by the strip. Where it is not, that is the gain available by keeping the mask on."
+    # terrain
+    op = c.get('openness', 1.0); fl = c.get('fl', 0.0); lk = c.get('leak', 0.0); pr = c.get('press')
+    if op >= 0.6: level, meaning = "breathing freely", "a high green plateau: full, easy breaths. This is what a well-treated stretch looks like."
+    elif op >= 0.25: level, meaning = "airway narrowing", "a yellow dip: breaths were getting through but shrunken or flattened, the airway partly collapsing on each breath in. This does not count as an event yet it fragments sleep."
+    else: level, meaning = "airflow stopped", "a red crater: airflow fell to almost nothing. If there is no pillar here the machine did not flag it; look at the raw flow in the Night tab."
+    detail = f"Openness {op:.2f} (1 is free, 0 is stopped)" + (f", leak {lk:.0f} L/min" if lk else '') + (f", pressure {pr:.1f} cmH2O" if pr is not None else '')
+    do = {"breathing freely": "nothing; this is the goal.", "airway narrowing": "yellow stretches are what a slightly higher minimum pressure or less EPR smooths out; if they coincide with a leak pool, fix the seal first. Both are prescriber conversations.", "airflow stopped": "a crater with a pillar is an event already explained by the pillar; a crater without one is worth looking at in the Night tab."}[level]
+    return f"<b>{level.capitalize()}</b>, {n} at {t}<br>{meaning}<br><i>{detail}.</i><br><b>What to do:</b> {do}"
