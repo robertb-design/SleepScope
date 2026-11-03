@@ -73,6 +73,61 @@ def read_export(path, date_from: dt.date | None = None, progress=None):
     return out
 
 
+def read_shortcut_csv(path):
+    """Read the small file the SleepScope Health Shortcut writes on the phone: one line per record,
+    type,start,end,value (Shortcuts' default date wording such as "Nov 1, 2026 at 1:20 AM" is accepted, so is yyyy-MM-dd HH:mm:ss).
+    Returns the same dict shape as read_export."""
+    import re
+    out = {k: [] for k in KEEP.values()}
+    MON = {m: i for i, m in enumerate(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'], 1)}
+    def pdate(x):
+        x = re.sub(r'\s+', ' ', x.strip().replace(' at ', ' ')).replace('\u202f', ' ')
+        for f in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%m/%d/%Y %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%m/%d/%y %I:%M %p', '%m/%d/%Y %I:%M %p'):
+            try: return dt.datetime.strptime(x, f)
+            except ValueError: pass
+        m = re.match(r'^([A-Za-z]{3})[a-z]*\.? (\d{1,2}),? (\d{4}) (\d{1,2}):(\d{2})(?::(\d{2}))? ?([AaPp][Mm])?$', x)
+        if m and m.group(1).lower() in MON:
+            h = int(m.group(4)); ap = (m.group(7) or '').lower()
+            if ap == 'pm' and h < 12: h += 12
+            if ap == 'am' and h == 12: h = 0
+            return dt.datetime(int(m.group(3)), MON[m.group(1).lower()], int(m.group(2)), h, int(m.group(5)), int(m.group(6) or 0))
+        return None
+    def split(line):
+        cells, cur, q = [], '', False
+        for ch in line:
+            if ch == '"': q = not q
+            elif ch == ',' and not q: cells.append(cur); cur = ''
+            else: cur += ch
+        cells.append(cur)
+        merged = []; i = 0
+        while i < len(cells):                                          # re-join "Nov 1" + " 2026 at ..." split by the comma in the date
+            t = cells[i].strip()
+            if re.match(r'^[A-Za-z]{3,9}\.? \d{1,2}$', t) and i + 1 < len(cells) and re.match(r'^\s*\d{4}', cells[i + 1]): merged.append(t + ', ' + cells[i + 1].strip()); i += 2
+            else: merged.append(cells[i]); i += 1
+        return merged
+    for line in open(path, 'r', encoding='utf-8-sig', errors='ignore'):
+        c = split(line.rstrip('\n'))
+        if len(c) < 4: continue
+        typ = c[0].strip().lower()
+        if typ in ('type',): continue
+        sd = pdate(c[1]); ed = pdate(c[2]); raw = c[3].strip()
+        if sd is None: continue
+        if 'sleep' in typ:
+            if ed is None: continue
+            v = raw.lower(); stage = 'Deep' if 'deep' in v else 'REM' if 'rem' in v else 'Core' if 'core' in v else 'Awake' if 'awake' in v else 'InBed' if 'bed' in v else 'Asleep'
+            out['sleep'].append((sd, ed, stage, 'Shortcut'))
+        else:
+            try: v = float(re.sub(r'[^\d.\-]', '', raw))
+            except ValueError: continue
+            k = 'hrv' if ('heart rate var' in typ or 'hrv' in typ) else 'hr' if 'heart' in typ else 'spo2' if ('oxygen' in typ or 'spo2' in typ) else 'rr' if 'respir' in typ else None
+            if not k: continue
+            if k == 'spo2' and v <= 1: v *= 100
+            out[k].append((sd, v))
+    for k in ('hr', 'spo2', 'rr', 'hrv'): out[k].sort()
+    out['sleep'].sort()
+    return out
+
+
 def attach(data, nights):
     """Attach per-night Apple summaries. Returns number of nights with sleep data."""
     by_night = {}
