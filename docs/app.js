@@ -152,9 +152,10 @@ function zoomEvent(ses, e) {
 const LB = { bin: 120, t0: 19, t1: 33, Z: 6 }; LB.n = (LB.t1 - LB.t0) * 3600 / LB.bin;
 let landCam = 'over';
 function nightGrids(n) {
-  const W = LB.n; const op = new Array(W).fill(NaN), lk = new Array(W).fill(NaN), pr = new Array(W).fill(NaN);
+  const W = LB.n; const op = new Array(W).fill(NaN), lk = new Array(W).fill(NaN), pr = new Array(W).fill(NaN), sp = new Array(W).fill(NaN);
   const [y, m, d] = n.date.split('-').map(Number); const base = new Date(y, m - 1, d, LB.t0, 0, 0).getTime();
   for (const s of n.sessions) {
+    if (s.spo2 && s.spo2.length) for (let i1 = 0; i1 < s.spo2.length; i1 += LB.bin) { const b = Math.floor((s.start.getTime() + 1000 * i1 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; let mn = Infinity; for (let k = i1; k < Math.min(i1 + LB.bin, s.spo2.length); k++) if (s.spo2[k] > 0 && s.spo2[k] < mn) mn = s.spo2[k]; if (mn < Infinity) sp[b] = Number.isNaN(sp[b]) ? mn : Math.min(sp[b], mn); }
     const fl = s.ch.FlowLim, leak = s.ch.Leak, press = s.ch.Press, vr = s.vent; const n2 = fl ? fl.length : (press ? press.length : 0); const step = LB.bin / 2;
     for (let i2 = 0; i2 < n2; i2 += step) {
       const b = Math.floor((s.start.getTime() + 2000 * i2 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; const j = Math.min(i2 + step, n2);
@@ -165,7 +166,7 @@ function nightGrids(n) {
       if (press) { let a = 0; for (let k = i2; k < j; k++) a += press[k]; pr[b] = a / (j - i2); }
     }
   }
-  return { op, lk, pr, base };
+  return { op, lk, pr, sp, base };
 }
 function drawLandscape() {
   if (!nights.length) return; const mode = $('landmode').value; let sel;
@@ -177,13 +178,19 @@ function drawLandscape() {
   const scale = [[0, '#c9c8c3'], [0.165, '#c9c8c3'], [0.1667, '#e34948'], [0.5, '#eda100'], [1, '#1baf7a']]; // value -0.2 .. 1 : grey floor then red->yellow->green
   const pil = { 'Obstructive Apnea': { x: [], y: [], z: [], c: C.red }, 'Central Apnea': { x: [], y: [], z: [], c: C.violet }, 'Hypopnea': { x: [], y: [], z: [], c: C.orange } };
   sel.forEach((n, k) => {
-    const { op, lk, pr, base } = nightGrids(n); const y0 = k * gap; landGrids[k] = { op, lk, pr, base, n };
+    const { op, lk, pr, sp, base } = nightGrids(n); const y0 = k * gap; landGrids[k] = { op, lk, pr, sp, base, n };
     const z = op.map(v => Number.isNaN(v) ? -0.15 * LB.Z : Math.min(1, Math.max(0, v)) * LB.Z); const col = op.map(v => Number.isNaN(v) ? -0.2 : Math.min(1, Math.max(0, v)));
     const zz = z.map((v, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(W - 1, i + 2); j++) { a += z[j]; c++; } return a / c; });
     traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'none', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date), meta: { kind: 'terrain', k } });
     const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'none', meta: { kind: 'water', k } });
     const px = [], pz = []; pr.forEach((v, i) => { if (!Number.isNaN(v)) { px.push(xs[i]); pz.push(LB.Z * (1.15 + (v - 4) / 12)); } else { px.push(null); pz.push(null); } });
     traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#ffffff', width: 3 }, hoverinfo: 'none', name: 'pressure', meta: { kind: 'pressure', k } });
+    if (sp.some(v => !Number.isNaN(v))) {
+      const ox = [], oz = [], oc = [], dx = [], dz = []; const yo = y0 + sw / 2 + 0.9;
+      sp.forEach((v, i) => { if (Number.isNaN(v)) { ox.push(null); oz.push(null); oc.push('#1baf7a'); return; } const z = LB.Z * (1.9 + (Math.min(100, Math.max(85, v)) - 85) / 15 * 0.7); ox.push(xs[i]); oz.push(z); oc.push(v < 90 ? C.red : v < 94 ? '#eda100' : '#1baf7a'); if (v < 90) { dx.push(xs[i]); dz.push(z); } });
+      traces.push({ type: 'scatter3d', mode: 'lines', x: ox, y: ox.map(() => yo), z: oz, line: { color: oc, width: 4 }, hoverinfo: 'none', name: 'SpO2', meta: { kind: 'spo2', k } });
+      if (dx.length) traces.push({ type: 'scatter3d', mode: 'markers', x: dx, y: dx.map(() => yo), z: dz, marker: { color: C.red, size: 4 }, hoverinfo: 'none', meta: { kind: 'spo2', k } });
+    }
     if (n.apple && n.apple.stages.length) {
       const stageCol = { Deep: 0.1, Core: 0.35, Asleep: 0.35, REM: 0.6, Awake: 0.85, InBed: 1.0 }; const rib = new Array(W).fill(null); const rc = new Array(W).fill(0);
       for (const r of n.apple.stages) { const b0 = Math.max(0, Math.floor((r.s - base) / 1000 / LB.bin)), b1 = Math.min(W, Math.ceil((r.e - base) / 1000 / LB.bin)); for (let b = b0; b < b1; b++) { if (r.stage === 'InBed' && rib[b] !== null) continue; rib[b] = 0.25 * LB.Z; rc[b] = stageCol[r.stage] ?? 0.35; } }
@@ -214,6 +221,7 @@ function landClick(ev) {
     if (meta.kind === 'terrain') html = Number.isNaN(op) ? EX.point('floor', { night, time }) : EX.point('terrain', { night, time, openness: Math.min(1, Math.max(0, op)), leak: lk, press: pr });
     else if (meta.kind === 'water') html = EX.point('water', { night, time, leak: lk });
     else if (meta.kind === 'pressure') html = EX.point('pressure', { night, time, press: pr ?? 0 });
+    else if (meta.kind === 'spo2') html = EX.point('spo2', { night, time, spo2: g.sp[i], press: pr, openness: Number.isNaN(op) ? null : op });
     else if (meta.kind === 'stage') html = EX.point('stage', { night, time, stage: (landStages[meta.k] || [])[i] || 'Asleep' });
   }
   if (!html) return; const el = $('landpop'); el.innerHTML = html + '<div style="color:#8a8985;font-size:11px;margin-top:4px">tap to close</div>'; el.style.display = 'block';

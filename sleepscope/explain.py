@@ -198,6 +198,15 @@ def point(kind, **c) -> str:
         st = c.get('stage', '')
         words = {'Deep': 'Deep sleep, the physically restorative kind. Adults get most of it in the first half of the night.', 'Core': 'Core (light) sleep, the bulk of a normal night.', 'REM': 'REM, dreaming sleep, when muscles relax most and the airway is at its floppiest; events often cluster here.', 'Awake': 'Awake, as judged by the Watch from movement and heart rate.', 'InBed': 'In bed but not asleep.', 'Asleep': 'Asleep (the Watch did not separate stages).'}.get(st, st)
         return f"<b>Apple Watch: {st}</b>, {n} at {t}<br>{words}<br>Ribbon over grey floor is sleep with the mask off: untreated sleep.<br><b>What to do:</b> the ribbon should be covered by the strip. Where it is not, that is the gain available by keeping the mask on."
+    if kind == 'spo2':
+        v = c.get('spo2', 0); op = c.get('openness'); pr = c.get('press')
+        if v >= 94: head, meaning, do = "Oxygen normal", f"the ring read {v:.0f}% (lowest in these two minutes). 94 and above is normal sleeping oxygen; the line sits high and green.", "nothing; this is what treated sleep looks like."
+        elif v >= 90: head, meaning, do = "Oxygen dipped", f"the ring read {v:.0f}% at its lowest here. A dip of 3 to 4 points from your baseline is a desaturation; one or two an hour is ordinary, a cluster is not.", "look at the ground under this spot: a red crater or a pillar means the airway caused it. Flat green ground with a dip means either the finger moved or an event the machine did not flag; the Night tab shows the raw flow."
+        else: head, meaning, do = "Oxygen low", f"the ring read {v:.0f}%, under 90. Brief and isolated, it is usually the sensor (finger moved, ring loose). Repeated, or lasting more than a minute, it is real and matters.", "check the pulse in the Night tab at this time: a real event shows the pulse rising a few seconds after the dip; a sensor dropout shows the pulse going ragged at the same instant. Sustained time under 88 is a doctor conversation, not a setting change."
+        extra = []
+        if op is not None: extra.append("breathing " + ("free" if op >= 0.6 else "narrowed" if op >= 0.25 else "stopped") + " at the time")
+        if pr is not None: extra.append(f"pressure {pr:.1f} cmH2O")
+        return f"<b>{head}</b>, {n} at {t}<br>{meaning}" + (f"<br><i>{', '.join(extra)}.</i>" if extra else '') + f"<br><b>What to do:</b> {do}"
     # terrain
     op = c.get('openness', 1.0); fl = c.get('fl', 0.0); lk = c.get('leak', 0.0); pr = c.get('press')
     if op >= 0.6: level, meaning = "breathing freely", "a high green plateau: full, easy breaths. This is what a well-treated stretch looks like."

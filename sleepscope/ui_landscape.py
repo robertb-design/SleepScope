@@ -43,9 +43,16 @@ def terrain_colour(z):
 
 def night_grids(night):
     """Return (openness[NBIN], leak[NBIN], press[NBIN], mask_on[NBIN]) for one night, NaN where no data."""
-    op = np.full(NBIN, np.nan); lk = np.full(NBIN, np.nan); pr = np.full(NBIN, np.nan)
+    op = np.full(NBIN, np.nan); lk = np.full(NBIN, np.nan); pr = np.full(NBIN, np.nan); sp = np.full(NBIN, np.nan)
     base = dt.datetime.combine(night.date, dt.time(0)) + dt.timedelta(hours=T_START)
     for s in night.sessions:
+        ox = getattr(s, 'spo2', None)
+        if ox is not None and len(ox) and np.any(ox > 0):          # ring / oximeter at 1 Hz: keep the bin minimum so dips survive
+            for i1 in range(0, len(ox), BIN_S):
+                b = int(((s.start + dt.timedelta(seconds=i1)) - base).total_seconds() // BIN_S)
+                if not 0 <= b < NBIN: continue
+                seg = ox[i1:i1 + BIN_S]; seg = seg[seg > 0]
+                if len(seg): sp[b] = float(np.nanmin(seg)) if np.isnan(sp[b]) else min(sp[b], float(np.nanmin(seg)))
         vr = getattr(s, 'vent_ratio', None); fl = s.ch.get('FlowLim'); leak = s.ch.get('Leak'); press = s.ch.get('Press')
         n2 = len(fl) if fl is not None else 0
         for i2 in range(0, n2, BIN_S // 2):
@@ -61,7 +68,7 @@ def night_grids(night):
             op[b] = v * (1 - 0.7 * f)
             if leak is not None: lk[b] = float(np.nanmean(leak[i2:j])) * 60
             if press is not None: pr[b] = float(np.nanmean(press[i2:j]))
-    return op, lk, pr
+    return op, lk, pr, sp
 
 
 class LandscapeView(QtWidgets.QWidget):
@@ -119,7 +126,7 @@ class LandscapeView(QtWidgets.QWidget):
         strip_w = 5.0
         # per night: terrain as a narrow surface (3 rows: front edge, centre, back edge) so strips read as ribbons with gaps
         for k, nt in enumerate(nights):
-            op, lk, pr = night_grids(nt); y0 = ys[k]
+            op, lk, pr, spg = night_grids(nt); y0 = ys[k]
             base_dt = dt.datetime.combine(nt.date, dt.time(0)) + dt.timedelta(hours=T_START)
             for i in range(0, W, 2):
                 tm = (base_dt + dt.timedelta(seconds=i * BIN_S)).strftime('%H:%M')
@@ -158,6 +165,21 @@ class LandscapeView(QtWidgets.QWidget):
                 line = gl.GLLinePlotItem(pos=pts, color=(1, 1, 1, 0.95), width=2, antialias=True, mode='line_strip', glOptions='opaque')
                 self.gl.addItem(line); self.items.append(line)
                 # thin grey post at start and end of each session so the pressure line visibly floats above the strip
+            # oximeter line (ring): along the back edge, 85% low to 100% high, coloured by level, red beads on dips under 90
+            oko = ~np.isnan(spg)
+            if oko.any():
+                yo = ys[k] + strip_w / 2 + 0.9
+                zo = Z_SCALE * (1.9 + (np.clip(spg, 85, 100) - 85) / 15 * 0.7)
+                colz = np.array([_hex(C['red']) if v < 90 else _hex(C['yellow']) if v < 94 else _hex(C['aqua']) for v in spg[oko]])
+                pts = np.column_stack([xs[oko], np.full(oko.sum(), yo), zo[oko]])
+                ol = gl.GLLinePlotItem(pos=pts, color=colz, width=2.5, antialias=True, mode='line_strip', glOptions='opaque')
+                self.gl.addItem(ol); self.items.append(ol)
+                dip = oko & (spg < 90)
+                if dip.any():
+                    bd = gl.GLScatterPlotItem(pos=np.column_stack([xs[dip], np.full(dip.sum(), yo), zo[dip]]), color=_hex(C['red']), size=9, pxMode=True, glOptions='translucent')
+                    self.gl.addItem(bd); self.items.append(bd)
+                for i in np.where(oko)[0][::2]:
+                    self.pick_pts.append((xs[i], yo, zo[i], 'spo2', dict(night=nt.label, time=(base_dt + dt.timedelta(seconds=int(i) * BIN_S)).strftime('%H:%M'), spo2=float(spg[i]), press=float(pr[i]) if not np.isnan(pr[i]) else None, openness=float(op[i]) if not np.isnan(op[i]) else None)))
             # event pillars
             base = dt.datetime.combine(nt.date, dt.time(0)) + dt.timedelta(hours=T_START)
             for s in nt.sessions:
@@ -251,7 +273,7 @@ class LandscapeView(QtWidgets.QWidget):
             if v.w() <= 0: continue
             sx = (v.x() / v.w() * 0.5 + 0.5) * w; sy = (1 - (v.y() / v.w() * 0.5 + 0.5)) * h
             d = (sx - pos.x()) ** 2 + (sy - pos.y()) ** 2
-            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0}[kind]   # favour pillars when close
+            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0, 'spo2': 0.7}[kind]   # favour pillars when close
             if d < bestd: bestd = d; best = i
         if best is None or bestd > 30 ** 2: self.popup.setVisible(False); return
         x, y, z, kind, ctx = self.pick_pts[best]
@@ -334,6 +356,7 @@ class LandscapeKey(QtWidgets.QWidget):
             (('line', '#9a9994'), 'White line: pressure delivered'),
             (('ribbon', None), 'Ribbon: Watch sleep stages'),
             (('swatch', '#0f6e4f'), '   deep'), (('swatch', C['blue']), '   core'), (('swatch', C['violet']), '   REM'), (('swatch', C['orange']), '   awake'), (('swatch', '#d9d8d3'), '   in bed, not asleep'),
+            (('line', C['aqua']), 'Back line: ring SpO2 (amber dip, red under 90)'),
             (('line', C['red']), 'Red line: Watch heart rate'),
             (('dot', None), 'Dots: Watch SpO2 (red = under 90%)'),
         ]
