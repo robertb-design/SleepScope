@@ -242,9 +242,13 @@ function buildContext(a, b) {
 }
 async function callClaude(messages, system) {
   const key = $('apikey').value.trim(); if (!key) throw new Error('No API key saved.');
-  const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: $('model').value.trim() || 'claude-sonnet-5-5', max_tokens: 2000, system, messages }) });
-  const j = await r.json(); if (!r.ok) throw new Error(`API error ${r.status}: ${(j.error && j.error.message) || r.statusText}`);
-  const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join(''); if (!text.trim()) throw new Error('The API returned no text (stop reason ' + j.stop_reason + ').'); return text;
+  let text = '', j = {};
+  for (const max_tokens of [8000, 24000]) {   // newer models may think before writing; retry once with a bigger budget if no text came back
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: $('model').value.trim() || 'claude-sonnet-5-5', max_tokens, system, messages }) });
+    j = await r.json(); if (!r.ok) throw new Error(`API error ${r.status}: ${(j.error && j.error.message) || r.statusText}`);
+    text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join(''); if (text.trim() || j.stop_reason !== 'max_tokens') break;
+  }
+  if (!text.trim()) throw new Error('The API returned no text (stop reason ' + j.stop_reason + ').'); if (j.stop_reason === 'max_tokens') text += '\n\n[Answer cut off at the length limit.]'; return text;
 }
 const sysWithAbout = () => SYSTEM + ($('about').value.trim() ? `\nAbout the user, in their words: ${$('about').value.trim()}\n` : '');
 async function claudeSynopsis(force) {

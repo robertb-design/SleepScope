@@ -61,23 +61,33 @@ class AskWorker(QtCore.QThread):
         if self.messages is None:      # connection test: list models
             req = urllib.request.Request('https://api.anthropic.com/v1/models', headers=hdr)
         else:
-            body = json.dumps({'model': self.model, 'max_tokens': 2000, 'system': self.system, 'messages': self.messages}).encode()
-            req = urllib.request.Request(API_URL, data=body, headers=hdr)
+            req = None
         t0 = dt.datetime.now()
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
-                raw = r.read()
-            _log(f'{req.full_url} -> {len(raw)} bytes in {(dt.datetime.now() - t0).total_seconds():.1f} s')
-            j = json.loads(raw)
             if self.messages is None:
-                ids = [m.get('id') for m in j.get('data', [])]
+                with urllib.request.urlopen(req, timeout=180) as r:
+                    raw = r.read()
+                j = json.loads(raw); ids = [m.get('id') for m in j.get('data', [])]
                 self.done.emit('Connection OK. Models available to this key: ' + ', '.join(ids))
                 return
-            text = ''.join(b.get('text', '') for b in j.get('content', []) if b.get('type') == 'text')
+            # Newer models may spend part of the budget thinking before any text appears, so the budget is generous
+            # and a reply that ran out before producing text is retried once with a larger one.
+            text = ''; j = {}
+            for max_tokens in (8000, 24000):
+                body = json.dumps({'model': self.model, 'max_tokens': max_tokens, 'system': self.system, 'messages': self.messages}).encode()
+                req = urllib.request.Request(API_URL, data=body, headers=hdr)
+                with urllib.request.urlopen(req, timeout=300) as r:
+                    raw = r.read()
+                _log(f'{req.full_url} max_tokens={max_tokens} -> {len(raw)} bytes in {(dt.datetime.now() - t0).total_seconds():.1f} s')
+                j = json.loads(raw)
+                text = ''.join(b.get('text', '') for b in j.get('content', []) if b.get('type') == 'text')
+                if text.strip() or j.get('stop_reason') != 'max_tokens': break
+                _log('no text before the token budget ran out; retrying with a larger budget')
             if not text.strip():
                 _log('EMPTY ANSWER, raw response: ' + raw.decode('utf-8', 'ignore')[:2000])
                 self.failed.emit('The API returned no text. Stop reason: ' + str(j.get('stop_reason')) + '. Raw response is in ask_log.txt.')
                 return
+            if j.get('stop_reason') == 'max_tokens': text += '\n\n[Answer cut off at the length limit.]'
             self.done.emit(text)
         except urllib.error.HTTPError as e:
             try: msg = json.loads(e.read()).get('error', {}).get('message', str(e))
