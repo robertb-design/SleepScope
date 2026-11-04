@@ -229,6 +229,44 @@ const SS = (() => {
     return parts.join(' &nbsp;·&nbsp; ');
   }
   function validation(nights) { let total = 0, hit = 0; for (const nt of nights) for (const s of nt.sessions) for (const m of s.machine) { if (!/Apnea/.test(m.label)) continue; total++; if (s.app.some(e => /Apnea/.test(e.label) && e.start >= new Date(m.start.getTime() - 15000) && m.start <= new Date(e.start.getTime() + e.dur * 1000 + 5000))) hit++; } return [total, hit]; }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel };
+  /** Oximeter timeline: 3% dips tied to events and leak, response of machine events, pulse surges. Lines of text; [] without oximetry. */
+  function oximetryReport(nt) {
+    const out = []; const hms = (d) => `${fmtTime(d)}:${String(d.getSeconds()).padStart(2, '0')}`;
+    for (const s of nt.sessions) {
+      const sp = s.spo2, pu = s.pulse; if (!sp || sp.length < 600) continue;
+      const n = sp.length; const valid = new Uint8Array(n); let nv = 0; for (let i = 0; i < n; i++) if (sp[i] > 50) { valid[i] = 1; nv++; } if (nv < 600) continue;
+      const base = new Float32Array(n).fill(NaN); const win = [];
+      for (let i = 0; i < n; i++) { const w = []; for (let k = Math.max(0, i - 120); k <= i; k++) if (valid[k]) w.push(sp[k]); if (w.length) { w.sort((a, b) => a - b); base[i] = w[Math.floor(w.length / 2)]; } }
+      const evs = [...s.machine, ...s.app.filter(e => e.label !== 'Flow Limitation Run' && e.label !== 'Large Leak')].sort((a, b) => a.start - b.start);
+      const leaks = s.app.filter(e => e.label === 'Large Leak').map(e => [(e.start - s.start) / 1000, (e.start - s.start) / 1000 + e.dur]);
+      const pmean = (a, b) => { let t = 0, c = 0; for (let k = Math.max(0, a); k < Math.min(n, b); k++) if (pu && pu[k] > 30) { t += pu[k]; c++; } return c ? t / c : NaN; };
+      const dips = []; let i = 0;
+      while (i < n) {
+        if (valid[i] && sp[i] <= base[i] - 3) {
+          let j = i; while (j < n && valid[j] && sp[j] <= base[j] - 3) j++;
+          if (j - i >= 10) {
+            let mn = 101, k0 = i; for (let k = i; k < j; k++) if (sp[k] < mn) { mn = sp[k]; k0 = k; }
+            const t = new Date(s.start.getTime() + 1000 * i); const pb = pmean(i - 30, i), pa = pmean(k0, k0 + 30);
+            let near = null, off = 0; for (const e of evs) { const o = (t - e.start) / 1000; if (!near || Math.abs(o) < Math.abs(off)) { near = e; off = o; } }
+            const sec = (t - s.start) / 1000; const inLeak = leaks.some(([a, b]) => sec >= a && sec <= b);
+            const rose = Number.isFinite(pb) && Number.isFinite(pa) && pa - pb >= 4; const deepBrief = base[i] - mn >= 6 && j - i < 20 && !rose;
+            const tag = deepBrief ? 'likely sensor (deep, brief, no pulse response)' : rose ? 'pulse rose, consistent with arousal' : 'no pulse response';
+            const link = near && Math.abs(off) <= 90 ? `${near.label} [${near.source}] ${Math.abs(off).toFixed(0)} s ${off > 0 ? 'before' : 'after'}` : 'no scored event within 90 s';
+            dips.push(`  ${hms(t)} dip ${base[i].toFixed(0)} to ${mn.toFixed(0)}% for ${j - i} s, pulse ${Number.isFinite(pb) ? pb.toFixed(0) : '?'} to ${Number.isFinite(pa) ? pa.toFixed(0) : '?'}; ${tag}; nearest event: ${link}${inLeak ? '; during large leak' : ''}`);
+          }
+          i = j;
+        } else i++;
+      }
+      let resp = 0, followed = 0;
+      for (const e of s.machine) { const a = Math.floor((e.start - s.start) / 1000); if (a < 0 || a >= n) continue; let b0 = [], mn = 101; for (let k = Math.max(0, a - 60); k < a; k++) if (valid[k]) b0.push(sp[k]); for (let k = a; k < Math.min(n, a + 90); k++) if (valid[k] && sp[k] < mn) mn = sp[k]; if (mn > 100) continue; resp++; if (b0.length) { b0.sort((x, y) => x - y); if (b0[Math.floor(b0.length / 2)] - mn >= 3) followed++; } }
+      const hours = nv / 3600;
+      out.push(`Session ${fmtTime(s.start)} (${hours.toFixed(1)} h of oximetry): ${dips.length} desaturations of 3% or more lasting 10 s or longer (${(dips.length / hours).toFixed(1)}/h by this strict count); ${followed} of ${resp} machine-scored events were followed by a 3% drop within 90 s.`);
+      out.push(...(dips.length ? dips : ['  no 3% desaturations']));
+      for (const [a, b] of leaks) { let mn = 101, t = 0, c = 0; for (let k = Math.floor(a); k < Math.min(n, Math.floor(b)); k++) if (valid[k]) { t += sp[k]; c++; if (sp[k] < mn) mn = sp[k]; } if (c) out.push(`  large leak ${fmtTime(new Date(s.start.getTime() + 1000 * a))} for ${(b - a).toFixed(0)} s: SpO2 min ${mn.toFixed(0)}, mean ${(t / c).toFixed(1)}`); }
+      if (pu) { let surges = 0; for (let k = 0; k + 20 < n; k += 10) if (pu[k] > 30 && pu[k + 20] - pu[k] >= 8) surges++; out.push(`  pulse surges of 8 bpm or more within 20 s: ${surges} (${(surges / hours).toFixed(1)}/h), a rough arousal proxy`); }
+    }
+    return out;
+  }
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

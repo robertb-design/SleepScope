@@ -371,3 +371,63 @@ def settings_text(sm, html=True):
     else:
         parts.append('Humidity and tube temp: open the card root (STR.edf) to see them')
     return '   ·   '.join(parts)
+
+
+# ----------------------------------------------------------------------------- oximetry timeline for Claude and the explain panes
+def oximetry_report(night):
+    """Plain-text lines tying the oximeter trace (1 Hz per session) to events and leak, so a reader can see which
+    events cost oxygen. Empty list when the night has no oximetry."""
+    out = []
+    for s in night.sessions:
+        sp = getattr(s, 'spo2', None); pu = getattr(s, 'pulse', None)
+        if sp is None or len(sp) < 600 or not np.any(sp > 0): continue
+        sp = np.asarray(sp, dtype=float); pu = np.asarray(pu, dtype=float) if pu is not None else np.full_like(sp, np.nan)
+        valid = sp > 50
+        if valid.sum() < 600: continue
+        spv = np.where(valid, sp, np.nan)
+        # rolling 2 minute median baseline (previous 120 s)
+        base = np.full_like(spv, np.nan)
+        for i in range(len(spv)):
+            w = spv[max(0, i - 120):i + 1]; w = w[~np.isnan(w)]
+            if len(w): base[i] = np.median(w)
+        below = (spv <= base - 3) & valid
+        evs = sorted(s.machine_events + [e for e in s.app_events if 'Flow Limitation' not in e.label], key=lambda e: e.start)
+        leaks = [((e.start - s.start).total_seconds(), (e.start - s.start).total_seconds() + e.duration) for e in leak_episodes(s)]
+        dips = []; i = 0
+        while i < len(below):
+            if below[i]:
+                j = i
+                while j < len(below) and below[j]: j += 1
+                if j - i >= 10:
+                    seg = spv[i:j]; k = i + int(np.nanargmin(seg)); t = s.start + dt.timedelta(seconds=i)
+                    pb = np.nanmean(pu[max(0, i - 30):i]) if i else np.nan; pa = np.nanmean(pu[k:k + 30])
+                    near = min(evs, key=lambda e: abs((e.start - t).total_seconds()), default=None)
+                    off = (t - near.start).total_seconds() if near is not None else None
+                    in_leak = any(a <= (t - s.start).total_seconds() <= b for a, b in leaks)
+                    rose = (not np.isnan(pb)) and (not np.isnan(pa)) and pa - pb >= 4
+                    deep_brief = (base[i] - np.nanmin(seg) >= 6) and (j - i < 20) and not rose
+                    tag = 'likely sensor (deep, brief, no pulse response)' if deep_brief else ('pulse rose, consistent with arousal' if rose else 'no pulse response')
+                    link = f"{near.label} [{near.source}] {abs(off):.0f} s {'before' if off > 0 else 'after'}" if near is not None and abs(off) <= 90 else 'no scored event within 90 s'
+                    dips.append(f"  {t:%H:%M:%S} dip {base[i]:.0f} to {np.nanmin(seg):.0f}% for {j - i} s, pulse {pb:.0f} to {pa:.0f}; {tag}; nearest event: {link}" + ('; during large leak' if in_leak else ''))
+                i = j
+            else: i += 1
+        # response to machine events: SpO2 minimum within 90 s after each event start
+        resp = []
+        for e in s.machine_events:
+            a = int((e.start - s.start).total_seconds()); b = min(len(spv), a + 90)
+            if 0 <= a < len(spv):
+                w = spv[a:b]; w = w[~np.isnan(w)]
+                if len(w): resp.append((e, float(np.nanmedian(spv[max(0, a - 60):a])) if a else np.nan, float(w.min())))
+        followed = sum(1 for e, b0, m in resp if not np.isnan(b0) and b0 - m >= 3)
+        hours = valid.sum() / 3600
+        out.append(f"Session {s.start:%H:%M} ({hours:.1f} h of oximetry): {len(dips)} desaturations of 3% or more lasting 10 s or longer ({len(dips) / hours:.1f}/h by this strict count); "
+                   f"{followed} of {len(resp)} machine-scored events were followed by a 3% drop within 90 s.")
+        out += dips if dips else ['  no 3% desaturations']
+        for a, b in leaks:
+            w = spv[int(a):int(b)]; w = w[~np.isnan(w)]
+            if len(w): out.append(f"  large leak {s.start + dt.timedelta(seconds=a):%H:%M} for {b - a:.0f} s: SpO2 min {w.min():.0f}, mean {w.mean():.1f}")
+        # pulse surges as an arousal proxy
+        if not np.all(np.isnan(pu)):
+            surges = sum(1 for i in range(0, len(pu) - 20, 10) if pu[i + 20] - pu[i] >= 8)
+            out.append(f"  pulse surges of 8 bpm or more within 20 s: {surges} ({surges / hours:.1f}/h), a rough arousal proxy")
+    return out

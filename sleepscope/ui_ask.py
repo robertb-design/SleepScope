@@ -44,12 +44,17 @@ def build_context(nights, start, end, diag_ahi=None):
                 ltxt = f"leak={lk[min(i2, len(lk) - 1)] * 60:.0f}" if lk is not None and len(lk) else 'leak=?'
                 evs.append(f"{n.label} {e.start:%H:%M:%S} {e.label} [{e.source}] {e.duration:.0f}s {ptxt} {ltxt} {e.detail}")
     if len(evs) > 400: evs = evs[:400] + [f'... {len(evs) - 400} more events omitted']
+    ox = []
+    for n in sel:
+        rep = scoring.oximetry_report(n)
+        if rep: ox.append(f"{n.label}:"); ox += rep
+    oxtxt = ('\n\n=== Oximeter timeline (ring SpO2 and pulse matched to events and leak by clock time) ===\n' + '\n'.join(ox)) if ox else ''
     total, hit = scoring.validation_summary(sel)
     return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n=== App synopsis (rule based) ===\n{syn}\n\n"
             f"=== Per night statistics (tab separated; P = set pressure cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed scoring) ===\n"
-            + '\n'.join(table) + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs)
+            + '\n'.join(table) + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs) + oxtxt
             + "\n\n=== Method notes ===\nResMed stamps event end; app subtracts duration. App hypopnea = 30% flow drop >= 10 s without desaturation check (over-counts). "
-              f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter is listed above.")
+              f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter timeline section is present above; when it is, use it to say which events cost oxygen and which dips look like sensor artifact.")
 
 
 class AskWorker(QtCore.QThread):
