@@ -20,24 +20,34 @@ const idb = { db: null,
 async function filesFromInputs(list) {
   const files = {};
   for (const f of list) {
-    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || !/\.edf$/i.test(name) || name.includes('__MACOSX')) continue; files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); } }
+    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || name.includes('__MACOSX')) continue; if (/\.edf$/i.test(name)) files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); else if (/\.(csv|txt)$/i.test(name)) { const t = await entry.async('string'); if (isCompanion(t)) files['companion/' + name.split('/').pop()] = t; } } }
     else if (/\.edf$/i.test(f.name)) files[(f.webkitRelativePath || f.name).replace(/\\/g, '/')] = await f.arrayBuffer();
+    else if (/\.(csv|txt)$/i.test(f.name)) { const t = await f.text(); if (isCompanion(t)) files['companion/' + f.name] = t; }
   }
   return files;
 }
+// Oximeter CSV (Time, Oxygen Level...) or the Health Shortcut file travel alongside the card files under 'companion/'.
+function isCompanion(t) { const h = (t.slice(0, 200).split(/\r?\n/)[0] || '').toLowerCase(); return ((h.includes('oxygen') || h.includes('spo2')) && (h.includes('time') || h.includes('date'))) || /^(sleep|heart rate|blood oxygen),/.test(h); }
+function applyCompanions(files) {
+  let oxFiles = 0, oxSessions = 0, health = null;
+  for (const [k, t] of Object.entries(files)) { if (!k.startsWith('companion/') || typeof t !== 'string') continue; const h = t.slice(0, 200).toLowerCase(); if (h.includes('oxygen') || h.includes('spo2')) { const n = SS.importOximeterCsv(t, nights); if (n) { oxFiles++; oxSessions += n; } } else { const d = AH.readShortcutCsv(t); if (d.sleep.length || d.hr.length) health = d; } }
+  if (health) appleData = health;
+  return { oxFiles, oxSessions, health: !!health };
+}
 function normalise(files) { // flatten to folder/name keyed by the date folder where possible
-  const out = {}; for (const [k, v] of Object.entries(files)) { const parts = k.split('/'); const name = parts.pop(); if (/^STR\.edf$/i.test(name)) { out['STR.edf'] = v; continue; } const folder = parts.length ? parts.pop() : (name.match(/^(\d{8})_/) || [, 'x'])[1]; out[folder + '/' + name] = v; } return out;
+  const out = {}; for (const [k, v] of Object.entries(files)) { if (k.startsWith('companion/')) { out[k] = v; continue; } const parts = k.split('/'); const name = parts.pop(); if (/^STR\.edf$/i.test(name)) { out['STR.edf'] = v; continue; } const folder = parts.length ? parts.pop() : (name.match(/^(\d{8})_/) || [, 'x'])[1]; out[folder + '/' + name] = v; } return out;
 }
 async function loadFiles(files, label) {
   const strKey = Object.keys(files).find(k => /(^|\/)STR\.edf$/i.test(k)); strData = strKey ? SS.readStr(files[strKey]) : null;
   const prog = $('progress'); prog.style.display = 'block'; const bar = prog.firstElementChild; $('loadmsg').textContent = 'Reading ' + label + '…';
   const t0 = Date.now();
   nights = await SS.buildSessions(files, (i, n, name) => { bar.style.width = (100 * i / Math.max(n, 1)) + '%'; $('loadmsg').textContent = `Reading ${name} (${i + 1}/${n})`; });
+  const comp = nights.length ? applyCompanions(files) : { oxFiles: 0, oxSessions: 0, health: false };
   for (let i = 0; i < nights.length; i++) { const n = nights[i]; $('loadmsg').textContent = `Scoring ${SS.label(n.date)}`; bar.style.width = (100 * i / nights.length) + '%'; await new Promise(r => setTimeout(r, 0)); for (const s of n.sessions) SS.scoreSession(s); n.stats = SS.nightStats(n); }
   prog.style.display = 'none';
   if (!nights.length) { $('loadmsg').textContent = 'No sessions of 5 minutes or longer found. Pick the DATALOG zip or the .edf files inside a date folder.'; return; }
   const [tot, hit] = SS.validation(nights);
-  $('loadmsg').textContent = `${nights.length} nights loaded in ${((Date.now() - t0) / 1000).toFixed(1)} s. App detector reproduced ${hit} of ${tot} machine-scored apneas.`;
+  $('loadmsg').textContent = `${nights.length} nights loaded in ${((Date.now() - t0) / 1000).toFixed(1)} s. App detector reproduced ${hit} of ${tot} machine-scored apneas.` + (comp.oxFiles ? ` Ring: ${comp.oxFiles} file${comp.oxFiles > 1 ? 's' : ''}, SpO2 on ${comp.oxSessions} session${comp.oxSessions > 1 ? 's' : ''}.` : '') + (comp.health ? ' Watch file read.' : '');
   afterLoad();
 }
 function afterLoad() {
@@ -184,7 +194,7 @@ function drawLandscape() {
     traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'none', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date), meta: { kind: 'terrain', k } });
     const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'none', meta: { kind: 'water', k } });
     const px = [], pz = []; pr.forEach((v, i) => { if (!Number.isNaN(v)) { px.push(xs[i]); pz.push(LB.Z * (1.15 + (v - 4) / 12)); } else { px.push(null); pz.push(null); } });
-    traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#ffffff', width: 3 }, hoverinfo: 'none', name: 'pressure', meta: { kind: 'pressure', k } });
+    traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#c026d3', width: 5 }, hoverinfo: 'none', name: 'pressure', meta: { kind: 'pressure', k } });
     if (sp.some(v => !Number.isNaN(v))) {
       const ox = [], oz = [], oc = [], dx = [], dz = []; const yo = y0 + sw / 2 + 0.9;
       sp.forEach((v, i) => { if (Number.isNaN(v)) { ox.push(null); oz.push(null); oc.push('#1baf7a'); return; } const z = LB.Z * (1.9 + (Math.min(100, Math.max(85, v)) - 85) / 15 * 0.7); ox.push(xs[i]); oz.push(z); oc.push(v < 90 ? C.red : v < 94 ? '#eda100' : '#1baf7a'); if (v < 90) { dx.push(xs[i]); dz.push(z); } });

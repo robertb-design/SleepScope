@@ -5,7 +5,7 @@ Each night is a strip of terrain running left to right through the night. Height
 Nights are stacked front to back (oldest at the back). Colour follows height: green plateau, yellow dips, red craters.
 Grey floor = no mask on. Blue water = large leak (over 24 L/min), the mask letting therapy escape.
 Pillars mark machine-scored events: red obstructive apnea, violet central apnea, orange hypopnea.
-Thin white line above each strip = set pressure.
+Magenta line above each strip = set pressure.
 """
 from __future__ import annotations
 import datetime as dt
@@ -162,7 +162,7 @@ class LandscapeView(QtWidgets.QWidget):
             if ok.any():
                 zp = Z_SCALE * (1.15 + (np.where(ok, pr, 4) - 4) / 12 * 1.0)
                 pts = np.column_stack([xs[ok], np.full(ok.sum(), ys[k]), zp[ok]])
-                line = gl.GLLinePlotItem(pos=pts, color=(1, 1, 1, 0.95), width=2, antialias=True, mode='line_strip', glOptions='opaque')
+                line = gl.GLLinePlotItem(pos=pts, color=_hex('#c026d3', 0.98), width=3, antialias=True, mode='line_strip', glOptions='opaque')
                 self.gl.addItem(line); self.items.append(line)
                 # thin grey post at start and end of each session so the pressure line visibly floats above the strip
             # oximeter line (ring): along the back edge, 85% low to 100% high, coloured by level, red beads on dips under 90
@@ -329,7 +329,7 @@ class LandscapeKey(QtWidgets.QWidget):
             p.setBrush(QtGui.QColor(c)); p.setPen(QtCore.Qt.NoPen); p.drawEllipse(QtCore.QPointF(X(t), Z(1.35)), 4, 4)
         # pressure line
         p.setPen(QtGui.QPen(QtGui.QColor('#ffffff'), 2)); p.drawLine(QtCore.QPointF(X(0.22), Z(1.1)), QtCore.QPointF(X(0.86), Z(1.1)))
-        p.setPen(QtGui.QPen(QtGui.QColor('#9a9994'), 1)); p.drawLine(QtCore.QPointF(X(0.22), Z(1.1)), QtCore.QPointF(X(0.86), Z(1.1)))
+        p.setPen(QtGui.QPen(QtGui.QColor('#c026d3'), 2)); p.drawLine(QtCore.QPointF(X(0.22), Z(1.1)), QtCore.QPointF(X(0.86), Z(1.1)))
         # stage ribbon in front
         rib_y = base + 14
         for a, b, c in ((0.12, 0.3, C['blue']), (0.3, 0.42, '#0f6e4f'), (0.42, 0.6, C['blue']), (0.6, 0.72, C['violet']), (0.72, 0.76, C['orange']), (0.76, 0.92, C['blue'])):
@@ -353,7 +353,7 @@ class LandscapeKey(QtWidgets.QWidget):
             (('pillar', C['red']), 'Red pillar: obstructive apnea'),
             (('pillar', C['violet']), 'Violet pillar: central apnea'),
             (('pillar', C['orange']), 'Orange pillar: hypopnea'),
-            (('line', '#9a9994'), 'White line: pressure delivered'),
+            (('line', '#c026d3'), 'Magenta line: pressure delivered'),
             (('ribbon', None), 'Ribbon: Watch sleep stages'),
             (('swatch', '#0f6e4f'), '   deep'), (('swatch', C['blue']), '   core'), (('swatch', C['violet']), '   REM'), (('swatch', C['orange']), '   awake'), (('swatch', '#d9d8d3'), '   in bed, not asleep'),
             (('line', C['aqua']), 'Back line: ring SpO2 (amber dip, red under 90)'),
