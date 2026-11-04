@@ -299,3 +299,10 @@ $('helptext').innerHTML = `
   try { const ap = await idb.get('apple'); if (ap) appleData = AH.unpack(ap); } catch (e) {}
   try { const last = await idb.get('last'); if (last && last.files) { autoOpenSynopsis = true; $('loadmsg').textContent = 'Reloading ' + last.label + ' from last time…'; await loadFiles(last.files, last.label); } } catch (e) {}
 })();
+
+function showAbout() {
+  const v = window.SS_VERSION || { version: 'source', date: '' }; const long = (d) => { try { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); } catch (e) { return d; } };
+  const year = Math.max(2026, new Date().getFullYear());
+  document.getElementById('aboutbody').innerHTML = `<div><b>${v.version === 'source' ? 'Running from source' : 'Version ' + v.version}</b></div><div><b>Issued</b>&nbsp; ${v.date ? long(v.date) : long(new Date().toISOString().slice(0, 10))}</div><div><b>Copyright</b>&nbsp; \u00a9 ${year} Robert Barmore. All rights reserved.</div><div><b>License</b>&nbsp; MIT; source and the Windows version at github.com/robertb-design/SleepScope</div>`;
+  const el = document.getElementById('about'); el.style.display = 'flex';
+}

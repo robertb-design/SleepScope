@@ -19,6 +19,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp version
+        run: |
+          d=$(date -u +%Y-%m-%d); sha=$(git rev-parse --short HEAD)
+          printf "window.SS_VERSION = { version: 'web %s (%s)', date: '%s' };\n" "$d" "$sha" "$d" > docs/version.js
+          cat docs/version.js
       - uses: actions/configure-pages@v5
         with:
           enablement: true
