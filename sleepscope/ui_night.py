@@ -17,6 +17,7 @@ PANELS = [  # key, title, units, y range or None
     ('mv', 'Minute ventilation', 'L/min', (0, 20)),
     ('spo2', 'SpO2', '%', (80, 100)),
     ('pulse', 'Pulse', 'bpm', (40, 120)),
+    ('motion', 'Ring motion (movement index)', '', (0, 100)),
     ('apple_stage', 'Apple Watch sleep stage', '', (-0.5, 4.5)),
     ('apple_hr', 'Apple Watch heart rate and SpO2', 'bpm / %', (40, 110)),
 ]
@@ -100,6 +101,8 @@ class NightView(QtWidgets.QWidget):
             vis = self.panel_actions[key].isChecked()
             if key in ('spo2', 'pulse') and self.night is not None and not any(s.has_oximetry for s in self.night.sessions):
                 vis = False
+            if key == 'motion' and (self.night is None or not any(getattr(s, 'motion', None) is not None for s in self.night.sessions)):
+                vis = False
             if key.startswith('apple') and (self.night is None or not getattr(self.night, 'apple', None)):
                 vis = False
             p.setVisible(vis)
@@ -124,7 +127,7 @@ class NightView(QtWidgets.QWidget):
         total_end = (night.sessions[-1].end - self.t0).total_seconds()
         pen = {k: pg.mkPen(c, width=1) for k, c in dict(flow=C['blue'], press=C['blue'], mask=C['aqua'], epr=C['grey'], leak=C['orange'],
                                                       flowlim=C['violet'], snore=C['magenta'], vent=C['aqua'], rr=C['blue'], tv=C['aqua'], mv=C['green'],
-                                                      spo2=C['red'], pulse=C['orange']).items()}
+                                                      spo2=C['red'], pulse=C['orange'], motion='#0e9aa7').items()}
         self.ov.clear(); self.ov.addItem(self.region)
         for s in night.sessions:
             off = (s.start - self.t0).total_seconds()
@@ -156,6 +159,13 @@ class NightView(QtWidgets.QWidget):
                 self.plots['spo2'].plot(t1, sp, pen=pen['spo2'], connect='finite')
                 self.plots['spo2'].addLine(y=90, pen=pg.mkPen(C['red'], style=QtCore.Qt.DashLine, width=1))
                 self.plots['pulse'].plot(t1, pu, pen=pen['pulse'], connect='finite')
+                mo = getattr(s, 'motion', None)
+                if mo is not None and len(mo) == len(t1):
+                    mv = np.where(mo >= 0, mo, np.nan)
+                    self.plots['motion'].plot(t1, mv, pen=pg.mkPen('#0e9aa7', width=1), fillLevel=0, brush=pg.mkBrush(14, 154, 167, 70), connect='finite')
+                for at in getattr(s, 'ox_alerts', []) or []:
+                    xa = off + (at - s.start).total_seconds()
+                    self.plots['spo2'].addLine(x=xa, pen=pg.mkPen(C['red'], width=1, style=QtCore.Qt.DotLine))
         ap = getattr(night, 'apple', None)
         if ap:
             order = {'Awake': 4, 'REM': 3, 'Core': 2, 'Asleep': 2, 'Deep': 1, 'InBed': 0}

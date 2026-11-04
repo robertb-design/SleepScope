@@ -426,6 +426,18 @@ def oximetry_report(night):
         for a, b in leaks:
             w = spv[int(a):int(b)]; w = w[~np.isnan(w)]
             if len(w): out.append(f"  large leak {s.start + dt.timedelta(seconds=a):%H:%M} for {b - a:.0f} s: SpO2 min {w.min():.0f}, mean {w.mean():.1f}")
+        mo = getattr(s, 'motion', None)
+        if mo is not None and len(mo):
+            mv = np.asarray(mo, dtype=float); runs = 0; i = 0
+            while i < len(mv):
+                if mv[i] >= 30:
+                    j = i
+                    while j < len(mv) and mv[j] >= 10: j += 1
+                    runs += 1; i = j
+                else: i += 1
+            out.append(f"  movement bursts (ring motion index 30 or more): {runs} ({runs / hours:.1f}/h)")
+        al = getattr(s, 'ox_alerts', None) or []
+        if al: out.append(f"  ring vibration alerts fired {len(al)} time{'s' if len(al) != 1 else ''}: " + ', '.join(a.strftime('%H:%M') for a in al[:12]))
         # pulse surges as an arousal proxy
         if not np.all(np.isnan(pu)):
             surges = sum(1 for i in range(0, len(pu) - 20, 10) if pu[i + 20] - pu[i] >= 8)

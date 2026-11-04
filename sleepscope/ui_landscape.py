@@ -43,7 +43,7 @@ def terrain_colour(z):
 
 def night_grids(night):
     """Return (openness[NBIN], leak[NBIN], press[NBIN], mask_on[NBIN]) for one night, NaN where no data."""
-    op = np.full(NBIN, np.nan); lk = np.full(NBIN, np.nan); pr = np.full(NBIN, np.nan); sp = np.full(NBIN, np.nan)
+    op = np.full(NBIN, np.nan); lk = np.full(NBIN, np.nan); pr = np.full(NBIN, np.nan); sp = np.full(NBIN, np.nan); hr = np.full(NBIN, np.nan); hx = np.full(NBIN, np.nan); mo = np.full(NBIN, np.nan)
     base = dt.datetime.combine(night.date, dt.time(0)) + dt.timedelta(hours=T_START)
     for s in night.sessions:
         ox = getattr(s, 'spo2', None)
@@ -53,6 +53,14 @@ def night_grids(night):
                 if not 0 <= b < NBIN: continue
                 seg = ox[i1:i1 + BIN_S]; seg = seg[seg > 0]
                 if len(seg): sp[b] = float(np.nanmin(seg)) if np.isnan(sp[b]) else min(sp[b], float(np.nanmin(seg)))
+                pl = getattr(s, 'pulse', None)
+                if pl is not None and len(pl) > i1:
+                    pseg = pl[i1:i1 + BIN_S]; pseg = pseg[(pseg > 30) & (pseg < 200)]
+                    if len(pseg): hr[b] = float(np.nanmean(pseg)); hx[b] = float(np.nanmax(pseg))
+                mm = getattr(s, 'motion', None)
+                if mm is not None and len(mm) > i1:
+                    mseg = mm[i1:i1 + BIN_S]; mseg = mseg[mseg >= 0]
+                    if len(mseg): mo[b] = float(np.nanmax(mseg))
         vr = getattr(s, 'vent_ratio', None); fl = s.ch.get('FlowLim'); leak = s.ch.get('Leak'); press = s.ch.get('Press')
         n2 = len(fl) if fl is not None else 0
         for i2 in range(0, n2, BIN_S // 2):
@@ -68,7 +76,7 @@ def night_grids(night):
             op[b] = v * (1 - 0.7 * f)
             if leak is not None: lk[b] = float(np.nanmean(leak[i2:j])) * 60
             if press is not None: pr[b] = float(np.nanmean(press[i2:j]))
-    return op, lk, pr, sp
+    return op, lk, pr, sp, hr, hx, mo
 
 
 class LandscapeView(QtWidgets.QWidget):
@@ -126,7 +134,7 @@ class LandscapeView(QtWidgets.QWidget):
         strip_w = 5.0
         # per night: terrain as a narrow surface (3 rows: front edge, centre, back edge) so strips read as ribbons with gaps
         for k, nt in enumerate(nights):
-            op, lk, pr, spg = night_grids(nt); y0 = ys[k]
+            op, lk, pr, spg, hrg, hxg, mog = night_grids(nt); y0 = ys[k]
             base_dt = dt.datetime.combine(nt.date, dt.time(0)) + dt.timedelta(hours=T_START)
             for i in range(0, W, 2):
                 tm = (base_dt + dt.timedelta(seconds=i * BIN_S)).strftime('%H:%M')
@@ -180,6 +188,22 @@ class LandscapeView(QtWidgets.QWidget):
                     self.gl.addItem(bd); self.items.append(bd)
                 for i in np.where(oko)[0][::2]:
                     self.pick_pts.append((xs[i], yo, zo[i], 'spo2', dict(night=nt.label, time=(base_dt + dt.timedelta(seconds=int(i) * BIN_S)).strftime('%H:%M'), spo2=float(spg[i]), press=float(pr[i]) if not np.isnan(pr[i]) else None, openness=float(op[i]) if not np.isnan(op[i]) else None)))
+            # ring pulse: teal line further back, 40 bpm low to 120 bpm high
+            okh = ~np.isnan(hrg)
+            if okh.any():
+                yh = ys[k] + strip_w / 2 + 1.9
+                zh_ = Z_SCALE * (1.2 + (np.clip(hrg, 40, 120) - 40) / 80)
+                hl = gl.GLLinePlotItem(pos=np.column_stack([xs[okh], np.full(okh.sum(), yh), zh_[okh]]), color=_hex('#0e9aa7', 0.95), width=2, antialias=True, mode='line_strip', glOptions='opaque')
+                self.gl.addItem(hl); self.items.append(hl)
+                for i in np.where(okh)[0][::2]:
+                    self.pick_pts.append((xs[i], yh, zh_[i], 'pulse', dict(night=nt.label, time=(base_dt + dt.timedelta(seconds=int(i) * BIN_S)).strftime('%H:%M'), pulse=float(hrg[i]), pulse_max=float(hxg[i]), spo2=float(spg[i]) if not np.isnan(spg[i]) else None, openness=float(op[i]) if not np.isnan(op[i]) else None)))
+            # ring motion: grey beads on the pulse lane where the hand moved a lot in the two minutes
+            okm = (~np.isnan(mog)) & (mog >= 30) & okh if okh.any() else np.zeros_like(okh, dtype=bool)
+            if okm.any():
+                mb = gl.GLScatterPlotItem(pos=np.column_stack([xs[okm], np.full(okm.sum(), ys[k] + strip_w / 2 + 1.9), zh_[okm] + 0.08 * Z_SCALE]), color=_hex('#52514e', 0.9), size=6, pxMode=True, glOptions='translucent')
+                self.gl.addItem(mb); self.items.append(mb)
+                for i in np.where(okm)[0]:
+                    self.pick_pts.append((xs[i], ys[k] + strip_w / 2 + 1.9, zh_[i] + 0.08 * Z_SCALE, 'motion', dict(night=nt.label, time=(base_dt + dt.timedelta(seconds=int(i) * BIN_S)).strftime('%H:%M'), motion=float(mog[i]), pulse=float(hrg[i]) if not np.isnan(hrg[i]) else None, spo2=float(spg[i]) if not np.isnan(spg[i]) else None)))
             # event pillars
             base = dt.datetime.combine(nt.date, dt.time(0)) + dt.timedelta(hours=T_START)
             for s in nt.sessions:
@@ -273,7 +297,7 @@ class LandscapeView(QtWidgets.QWidget):
             if v.w() <= 0: continue
             sx = (v.x() / v.w() * 0.5 + 0.5) * w; sy = (1 - (v.y() / v.w() * 0.5 + 0.5)) * h
             d = (sx - pos.x()) ** 2 + (sy - pos.y()) ** 2
-            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0, 'spo2': 0.7}[kind]   # favour pillars when close
+            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0, 'spo2': 0.7, 'pulse': 0.8, 'motion': 0.6}[kind]   # favour pillars when close
             if d < bestd: bestd = d; best = i
         if best is None or bestd > 30 ** 2: self.popup.setVisible(False); return
         x, y, z, kind, ctx = self.pick_pts[best]
@@ -357,6 +381,8 @@ class LandscapeKey(QtWidgets.QWidget):
             (('ribbon', None), 'Ribbon: Watch sleep stages'),
             (('swatch', '#0f6e4f'), '   deep'), (('swatch', C['blue']), '   core'), (('swatch', C['violet']), '   REM'), (('swatch', C['orange']), '   awake'), (('swatch', '#d9d8d3'), '   in bed, not asleep'),
             (('line', C['aqua']), 'Back line: ring SpO2 (amber dip, red under 90)'),
+            (('line', '#0e9aa7'), 'Teal line, furthest back: ring pulse'),
+            (('dot', '#52514e'), 'Grey beads on it: ring motion (hand moving)'),
             (('line', C['red']), 'Red line: Watch heart rate'),
             (('dot', None), 'Dots: Watch SpO2 (red = under 90%)'),
         ]

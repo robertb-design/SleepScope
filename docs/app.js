@@ -130,7 +130,9 @@ function showNight(i) {
   series('Press', 1, 'Set pressure', C.blue, 'y'); series('MaskPress', 1, 'Mask pressure', C.aqua, 'y'); series('Leak', 60, 'Leak L/min', C.orange, 'y2'); series('FlowLim', 1, 'Flow limitation', C.violet, 'y3'); series('Snore', 1, 'Snore', '#e87ba4', 'y3'); series('TidVol', 1000, 'Tidal volume mL', C.green, 'y4');
   for (const ses of n.sessions) if (ses.vent) { const xs = [], ys = []; for (let i = 0; i < ses.vent.length; i += 2) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.vent[i]); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.aqua, width: 1 }, name: 'Ventilation vs baseline', yaxis: 'y5' }); }
   const hasOx = n.sessions.some(x => x.hasOx); const hasAp = !!(n.apple && (n.apple.stages.length || n.apple.hr.length));
-  if (hasOx) for (const ses of n.sessions) if (ses.spo2) { const xs = [], ys = [], yp = []; for (let i = 0; i < ses.spo2.length; i += 5) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.spo2[i] > 0 ? ses.spo2[i] : null); yp.push(ses.pulse && ses.pulse[i] > 0 ? ses.pulse[i] : null); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.red, width: 1 }, name: 'SpO2 %', yaxis: 'y6' }); tr.push({ x: xs, y: yp, mode: 'lines', line: { color: C.orange, width: 1 }, name: 'Pulse', yaxis: 'y6' }); }
+  if (hasOx) for (const ses of n.sessions) if (ses.spo2) { const xs = [], ys = [], yp = []; for (let i = 0; i < ses.spo2.length; i += 5) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.spo2[i] > 0 ? ses.spo2[i] : null); yp.push(ses.pulse && ses.pulse[i] > 0 ? ses.pulse[i] : null); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.red, width: 1 }, name: 'SpO2 %', yaxis: 'y6' }); tr.push({ x: xs, y: yp, mode: 'lines', line: { color: C.orange, width: 1 }, name: 'Pulse', yaxis: 'y9' });
+    if (ses.motion) { const ym = []; for (let i = 0; i < ses.spo2.length; i += 5) ym.push(ses.motion[i] >= 0 ? 80 + Math.min(100, ses.motion[i]) * 0.08 : null); tr.push({ x: xs, y: ym, mode: 'lines', fill: 'tozeroy', line: { color: '#0e9aa7', width: 1 }, fillcolor: 'rgba(14,154,167,0.25)', name: 'Motion', yaxis: 'y6' }); }
+    for (const at of ses.oxAlerts || []) shapes.push({ type: 'line', xref: 'x', yref: 'y6', x0: at, x1: at, y0: 80, y1: 100, line: { color: C.red, width: 1, dash: 'dot' } }); }
   for (const ses of n.sessions) for (const e of [...ses.machine, ...ses.app]) { const col = EVC[e.label]; if (!col) continue; shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: e.start, x1: new Date(e.start.getTime() + Math.max(e.dur, 20) * 1000), y0: 0, y1: 1, fillcolor: col, opacity: e.source === 'machine' ? 0.35 : 0.15, line: { width: 0 } }); }
   if (hasAp) {
     const ord = { InBed: 0, Deep: 1, Core: 2, Asleep: 2, REM: 3, Awake: 4 }; const cols = { InBed: '#d9d8d3', Deep: '#0f6e4f', Core: C.blue, Asleep: C.blue, REM: C.violet, Awake: C.orange };
@@ -141,7 +143,7 @@ function showNight(i) {
   const nrows = (hasOx ? 6 : 5) + (hasAp ? 2 : 0); const dom = (k) => { const h = 1 / nrows, gap = 0.035; return [1 - (k + 1) * h + gap, 1 - k * h - gap / 2]; };
   const layout = { margin: { l: 36, r: 10, t: 10, b: 30 }, showlegend: false, shapes, hovermode: 'x', dragmode: 'pan', xaxis: { type: 'date', tickformat: '%H:%M' },
     yaxis: { domain: dom(0), title: { text: 'cmH2O', font: { size: 10 } }, range: [0, 21] }, yaxis2: { domain: dom(1), title: { text: 'leak', font: { size: 10 } }, range: [0, 60] }, yaxis3: { domain: dom(2), title: { text: 'FL', font: { size: 10 } }, range: [0, 1] }, yaxis4: { domain: dom(3), title: { text: 'Vt', font: { size: 10 } }, range: [0, 1200] }, yaxis5: { domain: dom(4), title: { text: 'vent', font: { size: 10 } }, range: [0, 2.5] } };
-  if (hasOx) layout.yaxis6 = { domain: dom(5), title: { text: 'SpO2', font: { size: 10 } }, range: [80, 100] };
+  if (hasOx) { layout.yaxis6 = { domain: dom(5), title: { text: 'SpO2', font: { size: 10 } }, range: [80, 100] }; layout.yaxis9 = { overlaying: 'y6', side: 'right', range: [40, 120], showgrid: false, title: { text: 'bpm', font: { size: 10 } } }; }
   if (hasAp) { const k = hasOx ? 6 : 5; layout['yaxis' + (k + 1)] = { domain: dom(k), tickvals: [0, 1, 2, 3, 4], ticktext: ['bed', 'deep', 'core', 'REM', 'wake'], range: [-0.6, 4.6], tickfont: { size: 9 } }; layout['yaxis' + (k + 2)] = { domain: dom(k + 1), title: { text: 'Watch', font: { size: 10 } }, range: [40, 110] }; }
   Plotly.newPlot('ch-night', tr, layout, { displayModeBar: false, responsive: true, scrollZoom: true });
   const ev = n.sessions.flatMap(ses => [...ses.machine, ...ses.app].map(e => ({ e, ses }))).sort((a, b) => a.e.start - b.e.start).filter(x => x.e.label !== 'Flow Limitation Run' || x.e.dur >= 60);
@@ -162,10 +164,10 @@ function zoomEvent(ses, e) {
 const LB = { bin: 120, t0: 19, t1: 33, Z: 6 }; LB.n = (LB.t1 - LB.t0) * 3600 / LB.bin;
 let landCam = 'over';
 function nightGrids(n) {
-  const W = LB.n; const op = new Array(W).fill(NaN), lk = new Array(W).fill(NaN), pr = new Array(W).fill(NaN), sp = new Array(W).fill(NaN);
+  const W = LB.n; const op = new Array(W).fill(NaN), lk = new Array(W).fill(NaN), pr = new Array(W).fill(NaN), sp = new Array(W).fill(NaN), hr = new Array(W).fill(NaN), hx = new Array(W).fill(NaN), mo = new Array(W).fill(NaN);
   const [y, m, d] = n.date.split('-').map(Number); const base = new Date(y, m - 1, d, LB.t0, 0, 0).getTime();
   for (const s of n.sessions) {
-    if (s.spo2 && s.spo2.length) for (let i1 = 0; i1 < s.spo2.length; i1 += LB.bin) { const b = Math.floor((s.start.getTime() + 1000 * i1 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; let mn = Infinity; for (let k = i1; k < Math.min(i1 + LB.bin, s.spo2.length); k++) if (s.spo2[k] > 0 && s.spo2[k] < mn) mn = s.spo2[k]; if (mn < Infinity) sp[b] = Number.isNaN(sp[b]) ? mn : Math.min(sp[b], mn); }
+    if (s.spo2 && s.spo2.length) for (let i1 = 0; i1 < s.spo2.length; i1 += LB.bin) { const b = Math.floor((s.start.getTime() + 1000 * i1 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; let mn = Infinity; for (let k = i1; k < Math.min(i1 + LB.bin, s.spo2.length); k++) if (s.spo2[k] > 0 && s.spo2[k] < mn) mn = s.spo2[k]; if (mn < Infinity) sp[b] = Number.isNaN(sp[b]) ? mn : Math.min(sp[b], mn); if (s.pulse) { let t = 0, c = 0, mx = 0; for (let k = i1; k < Math.min(i1 + LB.bin, s.pulse.length); k++) if (s.pulse[k] > 30 && s.pulse[k] < 200) { t += s.pulse[k]; c++; if (s.pulse[k] > mx) mx = s.pulse[k]; } if (c) { hr[b] = t / c; hx[b] = mx; } } if (s.motion) { let mm = -1; for (let k = i1; k < Math.min(i1 + LB.bin, s.motion.length); k++) if (s.motion[k] > mm) mm = s.motion[k]; if (mm >= 0) mo[b] = Number.isNaN(mo[b]) ? mm : Math.max(mo[b], mm); } }
     const fl = s.ch.FlowLim, leak = s.ch.Leak, press = s.ch.Press, vr = s.vent; const n2 = fl ? fl.length : (press ? press.length : 0); const step = LB.bin / 2;
     for (let i2 = 0; i2 < n2; i2 += step) {
       const b = Math.floor((s.start.getTime() + 2000 * i2 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; const j = Math.min(i2 + step, n2);
@@ -176,7 +178,7 @@ function nightGrids(n) {
       if (press) { let a = 0; for (let k = i2; k < j; k++) a += press[k]; pr[b] = a / (j - i2); }
     }
   }
-  return { op, lk, pr, sp, base };
+  return { op, lk, pr, sp, hr, hx, mo, base };
 }
 function drawLandscape() {
   if (!nights.length) return; const mode = $('landmode').value; let sel;
@@ -188,7 +190,7 @@ function drawLandscape() {
   const scale = [[0, '#c9c8c3'], [0.165, '#c9c8c3'], [0.1667, '#e34948'], [0.5, '#eda100'], [1, '#1baf7a']]; // value -0.2 .. 1 : grey floor then red->yellow->green
   const pil = { 'Obstructive Apnea': { x: [], y: [], z: [], c: C.red }, 'Central Apnea': { x: [], y: [], z: [], c: C.violet }, 'Hypopnea': { x: [], y: [], z: [], c: C.orange } };
   sel.forEach((n, k) => {
-    const { op, lk, pr, sp, base } = nightGrids(n); const y0 = k * gap; landGrids[k] = { op, lk, pr, sp, base, n };
+    const { op, lk, pr, sp, hr, hx, mo, base } = nightGrids(n); const y0 = k * gap; landGrids[k] = { op, lk, pr, sp, hr, hx, mo, base, n };
     const z = op.map(v => Number.isNaN(v) ? -0.15 * LB.Z : Math.min(1, Math.max(0, v)) * LB.Z); const col = op.map(v => Number.isNaN(v) ? -0.2 : Math.min(1, Math.max(0, v)));
     const zz = z.map((v, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(W - 1, i + 2); j++) { a += z[j]; c++; } return a / c; });
     traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'none', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date), meta: { kind: 'terrain', k } });
@@ -200,6 +202,13 @@ function drawLandscape() {
       sp.forEach((v, i) => { if (Number.isNaN(v)) { ox.push(null); oz.push(null); oc.push('#1baf7a'); return; } const z = LB.Z * (1.9 + (Math.min(100, Math.max(85, v)) - 85) / 15 * 0.7); ox.push(xs[i]); oz.push(z); oc.push(v < 90 ? C.red : v < 94 ? '#eda100' : '#1baf7a'); if (v < 90) { dx.push(xs[i]); dz.push(z); } });
       traces.push({ type: 'scatter3d', mode: 'lines', x: ox, y: ox.map(() => yo), z: oz, line: { color: oc, width: 4 }, hoverinfo: 'none', name: 'SpO2', meta: { kind: 'spo2', k } });
       if (dx.length) traces.push({ type: 'scatter3d', mode: 'markers', x: dx, y: dx.map(() => yo), z: dz, marker: { color: C.red, size: 4 }, hoverinfo: 'none', meta: { kind: 'spo2', k } });
+    }
+    if (hr.some(v => !Number.isNaN(v))) {
+      const px2 = [], pz2 = []; const yh = y0 + sw / 2 + 1.9;
+      hr.forEach((v, i) => { if (Number.isNaN(v)) { px2.push(null); pz2.push(null); } else { px2.push(xs[i]); pz2.push(LB.Z * (1.2 + (Math.min(120, Math.max(40, v)) - 40) / 80)); } });
+      traces.push({ type: 'scatter3d', mode: 'lines', x: px2, y: px2.map(() => yh), z: pz2, line: { color: '#0e9aa7', width: 3 }, hoverinfo: 'none', name: 'pulse', meta: { kind: 'pulse', k } });
+      const mx2 = [], mz2 = []; hr.forEach((v, i) => { if (!Number.isNaN(v) && mo[i] >= 30) { mx2.push(xs[i]); mz2.push(LB.Z * (1.2 + (Math.min(120, Math.max(40, v)) - 40) / 80) + 0.08 * LB.Z); } });
+      if (mx2.length) traces.push({ type: 'scatter3d', mode: 'markers', x: mx2, y: mx2.map(() => yh), z: mz2, marker: { color: '#52514e', size: 3 }, hoverinfo: 'none', meta: { kind: 'motion', k } });
     }
     if (n.apple && n.apple.stages.length) {
       const stageCol = { Deep: 0.1, Core: 0.35, Asleep: 0.35, REM: 0.6, Awake: 0.85, InBed: 1.0 }; const rib = new Array(W).fill(null); const rc = new Array(W).fill(0);
@@ -231,6 +240,8 @@ function landClick(ev) {
     if (meta.kind === 'terrain') html = Number.isNaN(op) ? EX.point('floor', { night, time }) : EX.point('terrain', { night, time, openness: Math.min(1, Math.max(0, op)), leak: lk, press: pr });
     else if (meta.kind === 'water') html = EX.point('water', { night, time, leak: lk });
     else if (meta.kind === 'pressure') html = EX.point('pressure', { night, time, press: pr ?? 0 });
+    else if (meta.kind === 'motion') html = EX.point('motion', { night, time, motion: g.mo[i], pulse: Number.isNaN(g.hr[i]) ? null : g.hr[i], spo2: Number.isNaN(g.sp[i]) ? null : g.sp[i] });
+    else if (meta.kind === 'pulse') html = EX.point('pulse', { night, time, pulse: g.hr[i], pulse_max: g.hx[i], spo2: Number.isNaN(g.sp[i]) ? null : g.sp[i], openness: Number.isNaN(op) ? null : op });
     else if (meta.kind === 'spo2') html = EX.point('spo2', { night, time, spo2: g.sp[i], press: pr, openness: Number.isNaN(op) ? null : op });
     else if (meta.kind === 'stage') html = EX.point('stage', { night, time, stage: (landStages[meta.k] || [])[i] || 'Asleep' });
   }

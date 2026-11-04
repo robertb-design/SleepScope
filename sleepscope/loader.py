@@ -233,9 +233,10 @@ def import_oximeter_csv(path, nights):
             if any(k in h for k in keys): return i
         return None
     ti, si, pi = col('time', 'date'), col('spo2', 'oxygen', 'o2'), col('pulse', 'hr', 'heart')
+    mi = col('motion', 'movement', 'activity'); ai = [i for i, h in enumerate(hdr) if 'reminder' in h or 'alarm' in h or 'vibrat' in h]
     if ti is None or si is None: return 0
     fmts = ['%H:%M:%S %b %d %Y', '%I:%M:%S %p %b %d %Y', '%b %d %Y %H:%M:%S', '%d %b %Y %H:%M:%S', '%H:%M:%S %m/%d/%Y', '%I:%M:%S %p %m/%d/%Y', '%m/%d/%Y %I:%M:%S %p', '%Y-%m-%d %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%H:%M:%S %d/%m/%Y', '%Y-%m-%dT%H:%M:%S']
-    ts, sp, pu = [], [], []
+    ts, sp, pu, mo, al = [], [], [], [], []
     fmt = None
     for r in rows[1:]:
         if len(r) <= max(ti, si): continue
@@ -253,9 +254,15 @@ def import_oximeter_csv(path, nights):
         except ValueError: continue
         try: p = float(r[pi]) if pi is not None else np.nan
         except ValueError: p = np.nan
-        ts.append(t); sp.append(s); pu.append(p)
+        try: mv = float(r[mi]) if mi is not None and len(r) > mi else np.nan
+        except ValueError: mv = np.nan
+        flag = 0.0
+        for i in ai:
+            try: flag = max(flag, float(r[i]) if len(r) > i and r[i].strip() not in ('', '--') else 0.0)
+            except ValueError: pass
+        ts.append(t); sp.append(s); pu.append(p); mo.append(mv); al.append(flag)
     if not ts: return 0
-    ts = np.array([t.timestamp() for t in ts]); sp = np.array(sp); pu = np.array(pu)
+    ts = np.array([t.timestamp() for t in ts]); sp = np.array(sp); pu = np.array(pu); mo = np.array(mo); al = np.array(al)
     filled = 0
     for nt in nights:
         for s in nt.sessions:
@@ -266,6 +273,10 @@ def import_oximeter_csv(path, nights):
             s.spo2 = np.interp(grid, ts[m], sp[m], left=np.nan, right=np.nan).astype(np.float32)
             s.pulse = np.interp(grid, ts[m], pu[m], left=np.nan, right=np.nan).astype(np.float32)
             s.spo2 = np.nan_to_num(s.spo2, nan=-1); s.pulse = np.nan_to_num(s.pulse, nan=-1)
+            if mi is not None and np.any(~np.isnan(mo[m])):
+                s.motion = np.nan_to_num(np.interp(grid, ts[m], np.nan_to_num(mo[m], nan=0.0), left=np.nan, right=np.nan), nan=-1).astype(np.float32)
+            else: s.motion = None
+            s.ox_alerts = [dt.datetime.fromtimestamp(float(t)) for t in ts[m][al[m] > 0]] if ai else []
             filled += 1
     return filled
 

@@ -198,6 +198,23 @@ def point(kind, **c) -> str:
         st = c.get('stage', '')
         words = {'Deep': 'Deep sleep, the physically restorative kind. Adults get most of it in the first half of the night.', 'Core': 'Core (light) sleep, the bulk of a normal night.', 'REM': 'REM, dreaming sleep, when muscles relax most and the airway is at its floppiest; events often cluster here.', 'Awake': 'Awake, as judged by the Watch from movement and heart rate.', 'InBed': 'In bed but not asleep.', 'Asleep': 'Asleep (the Watch did not separate stages).'}.get(st, st)
         return f"<b>Apple Watch: {st}</b>, {n} at {t}<br>{words}<br>Ribbon over grey floor is sleep with the mask off: untreated sleep.<br><b>What to do:</b> the ribbon should be covered by the strip. Where it is not, that is the gain available by keeping the mask on."
+    if kind == 'motion':
+        v = c.get('motion', 0); pl = c.get('pulse'); sp = c.get('spo2')
+        extra = []
+        if pl is not None: extra.append(f"pulse {pl:.0f} bpm")
+        if sp is not None: extra.append(f"oxygen low point {sp:.0f}%")
+        return (f"<b>Movement</b>, {n} at {t}<br>The ring's motion sensor peaked at {v:.0f} in these two minutes: the hand moved, which usually means you turned over or briefly woke. A few per night is normal; a cluster of beads is restless sleep."
+                + (f"<br><i>{', '.join(extra)}.</i>" if extra else '') + "<br><b>What to do:</b> an oxygen dip that sits exactly on a bead is probably the sensor being jostled, not the airway. Many beads with pillars or yellow ground under them means the breathing is what is waking you.")
+    if kind == 'pulse':
+        v = c.get('pulse', 0); mx = c.get('pulse_max', v); sp = c.get('spo2'); op = c.get('openness')
+        spread = mx - v
+        if spread >= 12: head, meaning, do = "Pulse jumped", f"average {v:.0f} bpm in these two minutes with a peak of {mx:.0f}. A jump like that in sleep is an arousal: the body woke for a moment, whether or not you remember it.", "look at what is under it. A pillar or a yellow patch means the airway did it; flat green ground with a jump is a leak, a noise, or a position change. Many of these with a low AHI is the picture of fragmented sleep the AHI misses."
+        elif v >= 85: head, meaning, do = "Pulse high for sleep", f"average {v:.0f} bpm. Sleeping heart rate normally sits 10 to 20 below the awake resting rate; a sustained high rate here suggests light or disturbed sleep, or simply early in the night before settling.", "nothing on its own. If it stays high all night across several nights, that is worth mentioning to a doctor."
+        else: head, meaning, do = "Pulse steady", f"average {v:.0f} bpm, peak {mx:.0f}. A low, flat pulse is what deep, undisturbed sleep looks like.", "nothing; this is the goal."
+        extra = []
+        if sp is not None: extra.append(f"oxygen low point {sp:.0f}%")
+        if op is not None: extra.append("breathing " + ("free" if op >= 0.6 else "narrowed" if op >= 0.25 else "stopped"))
+        return f"<b>{head}</b>, {n} at {t}<br>{meaning}" + (f"<br><i>{', '.join(extra)}.</i>" if extra else '') + f"<br><b>What to do:</b> {do}"
     if kind == 'spo2':
         v = c.get('spo2', 0); op = c.get('openness'); pr = c.get('press')
         if v >= 94: head, meaning, do = "Oxygen normal", f"the ring read {v:.0f}% (lowest in these two minutes). 94 and above is normal sleeping oxygen; the line sits high and green.", "nothing; this is what treated sleep looks like."
