@@ -1,0 +1,34 @@
+name: Publish phone app (GitHub Pages)
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stamp version
+        run: |
+          d=$(date -u +%Y-%m-%d); sha=$(git rev-parse --short HEAD)
+          printf "window.SS_VERSION = { version: 'web %s (%s)', date: '%s' };\n" "$d" "$sha" "$d" > docs/version.js
+          cat docs/version.js
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4

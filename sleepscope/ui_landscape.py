@@ -5,7 +5,7 @@ Each night is a strip of terrain running left to right through the night. Height
 Nights are stacked front to back (oldest at the back). Colour follows height: green plateau, yellow dips, red craters.
 Grey floor = no mask on. Blue water = large leak (over 24 L/min), the mask letting therapy escape.
 Pillars mark machine-scored events: red obstructive apnea, violet central apnea, orange hypopnea.
-Thin white line above each strip = set pressure.
+Magenta line above each strip = set pressure.
 """
 from __future__ import annotations
 import datetime as dt
@@ -43,9 +43,16 @@ def terrain_colour(z):
 
 def night_grids(night):
     """Return (openness[NBIN], leak[NBIN], press[NBIN], mask_on[NBIN]) for one night, NaN where no data."""
-    op = np.full(NBIN, np.nan); lk = np.full(NBIN, np.nan); pr = np.full(NBIN, np.nan)
+    op = np.full(NBIN, np.nan); lk = np.full(NBIN, np.nan); pr = np.full(NBIN, np.nan); sp = np.full(NBIN, np.nan)
     base = dt.datetime.combine(night.date, dt.time(0)) + dt.timedelta(hours=T_START)
     for s in night.sessions:
+        ox = getattr(s, 'spo2', None)
+        if ox is not None and len(ox) and np.any(ox > 0):          # ring / oximeter at 1 Hz: keep the bin minimum so dips survive
+            for i1 in range(0, len(ox), BIN_S):
+                b = int(((s.start + dt.timedelta(seconds=i1)) - base).total_seconds() // BIN_S)
+                if not 0 <= b < NBIN: continue
+                seg = ox[i1:i1 + BIN_S]; seg = seg[seg > 0]
+                if len(seg): sp[b] = float(np.nanmin(seg)) if np.isnan(sp[b]) else min(sp[b], float(np.nanmin(seg)))
         vr = getattr(s, 'vent_ratio', None); fl = s.ch.get('FlowLim'); leak = s.ch.get('Leak'); press = s.ch.get('Press')
         n2 = len(fl) if fl is not None else 0
         for i2 in range(0, n2, BIN_S // 2):
@@ -61,7 +68,7 @@ def night_grids(night):
             op[b] = v * (1 - 0.7 * f)
             if leak is not None: lk[b] = float(np.nanmean(leak[i2:j])) * 60
             if press is not None: pr[b] = float(np.nanmean(press[i2:j]))
-    return op, lk, pr
+    return op, lk, pr, sp
 
 
 class LandscapeView(QtWidgets.QWidget):
@@ -70,35 +77,65 @@ class LandscapeView(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(4, 4, 4, 4)
         bar = QtWidgets.QHBoxLayout(); lay.addLayout(bar)
         self.caption = QtWidgets.QLabel(''); self.caption.setStyleSheet('font-weight:600'); bar.addWidget(self.caption); bar.addStretch()
+        self.str_data = None
+        self.highlight = QtWidgets.QLabel(''); self.highlight.setWordWrap(True); self.highlight.setTextFormat(QtCore.Qt.RichText)
+        self.highlight.setStyleSheet('background:#fff4d6; border:1px solid #eda100; border-left:6px solid #eda100; border-radius:8px; padding:8px 12px; font-size:13px; color:#0b0b0b')
+        lay.addWidget(self.highlight)
         for lab, fn in (('Overview', self.view_overview), ('Fly along', self.view_along), ('Top down', self.view_top), ('Side', self.view_side)):
             b = QtWidgets.QPushButton(lab); b.clicked.connect(fn); bar.addWidget(b)
-        self.nmax = QtWidgets.QSpinBox(); self.nmax.setRange(3, 120); self.nmax.setValue(30); self.nmax.setPrefix('last '); self.nmax.setSuffix(' nights')
-        self.nmax.valueChanged.connect(lambda _: self.rebuild()); bar.addWidget(self.nmax)
+        self.mode = QtWidgets.QComboBox(); self.mode.addItems(['Synopsis range', 'Selected night', 'Last 30 nights']); self.mode.setToolTip('Which nights to draw')
+        self.mode.currentIndexChanged.connect(lambda _: self.rebuild()); bar.addWidget(self.mode)
+        self.range = None; self.selected = None
         if not HAVE_GL:
             lay.addWidget(QtWidgets.QLabel('3D view needs the PyOpenGL package. Close the app and run SleepScope.bat again (it installs missing packages), or run install.bat.'))
             return
         self.gl = gl.GLViewWidget(); self.gl.setBackgroundColor('#fcfcfb')
         mid = QtWidgets.QHBoxLayout(); mid.setSpacing(6); lay.addLayout(mid, 1); mid.addWidget(self.gl, 1); mid.addWidget(LandscapeKey(), 0, QtCore.Qt.AlignTop)
-        self.gl.setToolTip('Drag to rotate, wheel to zoom, middle drag or Ctrl+drag to pan')
+        self.gl.setToolTip('Click any pillar, pool or patch of terrain for a plain language explanation. Drag to rotate, wheel to zoom.')
+        self.gl.installEventFilter(self); self._press_pos = None
+        self.popup = QtWidgets.QLabel(self.gl); self.popup.setWordWrap(True); self.popup.setTextFormat(QtCore.Qt.RichText); self.popup.setVisible(False)
+        self.popup.setStyleSheet('background:#ffffff; border:1px solid #2a78d6; border-left:6px solid #2a78d6; border-radius:8px; padding:10px 12px; font-size:12.5px; color:#0b0b0b'); self.popup.setFixedWidth(360)
+        self.popup.mousePressEvent = lambda ev: self.popup.setVisible(False)
         self.items = []
 
     def set_nights(self, nights):
         self.nights = nights; self.rebuild()
+    def set_range(self, a, b):
+        self.range = (a, b)
+        if self.mode.currentIndex() == 1: self.mode.blockSignals(True); self.mode.setCurrentIndex(0); self.mode.blockSignals(False)
+        if self.nights: self.rebuild()
+    def set_selected(self, night):
+        self.selected = night
+        if night is not None: self.mode.blockSignals(True); self.mode.setCurrentIndex(1); self.mode.blockSignals(False)
+        if self.nights: self.rebuild()
 
     def rebuild(self):
         if not HAVE_GL or not self.nights: return
         for it in self.items:
             try: self.gl.removeItem(it)
             except Exception: pass
-        self.items = []
-        nights = self.nights[-self.nmax.value():][::-1]      # newest first = front (y = 0)
+        self.items = []; self.pick_pts = []   # (x, y, z, kind, ctx)
+        m = self.mode.currentIndex()
+        if m == 1 and self.selected is not None: nights = [self.selected]
+        elif m == 0 and self.range: nights = [n for n in self.nights if self.range[0] <= n.date <= self.range[1]] or self.nights[-14:]
+        else: nights = self.nights[-30:]
+        nights = nights[::-1]      # newest first = front (y = 0)
         N = len(nights); W = NBIN
         xs = np.arange(W, dtype=float) * 0.25                   # 2 min bin = 0.25 units  (12 h = 105 units)
         ys = np.arange(N, dtype=float) * 7.0                    # strip spacing
         strip_w = 5.0
         # per night: terrain as a narrow surface (3 rows: front edge, centre, back edge) so strips read as ribbons with gaps
         for k, nt in enumerate(nights):
-            op, lk, pr = night_grids(nt)
+            op, lk, pr, spg = night_grids(nt); y0 = ys[k]
+            base_dt = dt.datetime.combine(nt.date, dt.time(0)) + dt.timedelta(hours=T_START)
+            for i in range(0, W, 2):
+                tm = (base_dt + dt.timedelta(seconds=i * BIN_S)).strftime('%H:%M')
+                if np.isnan(op[i]): self.pick_pts.append((xs[i], y0, -0.15 * Z_SCALE, 'floor', dict(night=nt.label, time=tm)))
+                else:
+                    opi = float(np.clip(op[i], 0, 1)); lki = float(lk[i]) if not np.isnan(lk[i]) else 0.0; pri = float(pr[i]) if not np.isnan(pr[i]) else None
+                    self.pick_pts.append((xs[i], y0, opi * Z_SCALE, 'terrain', dict(night=nt.label, time=tm, openness=opi, fl=round(max(0.0, 1 - opi), 2), leak=lki, press=pri)))
+                    if lki > 24: self.pick_pts.append((xs[i], y0, 0.55 * Z_SCALE, 'water', dict(night=nt.label, time=tm, leak=lki)))
+                    if pri is not None: self.pick_pts.append((xs[i], y0, Z_SCALE * (1.15 + (pri - 4) / 12), 'pressure', dict(night=nt.label, time=tm, press=pri)))
             z = np.where(np.isnan(op), -0.15, np.clip(op, 0, 1)) * Z_SCALE
             col = terrain_colour(np.where(np.isnan(op), 0.0, np.clip(op, 0, 1)))
             col[np.isnan(op)] = _hex('#c9c8c3')                 # floor grey for mask off
@@ -125,9 +162,24 @@ class LandscapeView(QtWidgets.QWidget):
             if ok.any():
                 zp = Z_SCALE * (1.15 + (np.where(ok, pr, 4) - 4) / 12 * 1.0)
                 pts = np.column_stack([xs[ok], np.full(ok.sum(), ys[k]), zp[ok]])
-                line = gl.GLLinePlotItem(pos=pts, color=(1, 1, 1, 0.95), width=2, antialias=True, mode='line_strip', glOptions='opaque')
+                line = gl.GLLinePlotItem(pos=pts, color=_hex('#c026d3', 0.98), width=3, antialias=True, mode='line_strip', glOptions='opaque')
                 self.gl.addItem(line); self.items.append(line)
                 # thin grey post at start and end of each session so the pressure line visibly floats above the strip
+            # oximeter line (ring): along the back edge, 85% low to 100% high, coloured by level, red beads on dips under 90
+            oko = ~np.isnan(spg)
+            if oko.any():
+                yo = ys[k] + strip_w / 2 + 0.9
+                zo = Z_SCALE * (1.9 + (np.clip(spg, 85, 100) - 85) / 15 * 0.7)
+                colz = np.array([_hex(C['red']) if v < 90 else _hex(C['yellow']) if v < 94 else _hex(C['aqua']) for v in spg[oko]])
+                pts = np.column_stack([xs[oko], np.full(oko.sum(), yo), zo[oko]])
+                ol = gl.GLLinePlotItem(pos=pts, color=colz, width=2.5, antialias=True, mode='line_strip', glOptions='opaque')
+                self.gl.addItem(ol); self.items.append(ol)
+                dip = oko & (spg < 90)
+                if dip.any():
+                    bd = gl.GLScatterPlotItem(pos=np.column_stack([xs[dip], np.full(dip.sum(), yo), zo[dip]]), color=_hex(C['red']), size=9, pxMode=True, glOptions='translucent')
+                    self.gl.addItem(bd); self.items.append(bd)
+                for i in np.where(oko)[0][::2]:
+                    self.pick_pts.append((xs[i], yo, zo[i], 'spo2', dict(night=nt.label, time=(base_dt + dt.timedelta(seconds=int(i) * BIN_S)).strftime('%H:%M'), spo2=float(spg[i]), press=float(pr[i]) if not np.isnan(pr[i]) else None, openness=float(op[i]) if not np.isnan(op[i]) else None)))
             # event pillars
             base = dt.datetime.combine(nt.date, dt.time(0)) + dt.timedelta(hours=T_START)
             for s in nt.sessions:
@@ -139,6 +191,8 @@ class LandscapeView(QtWidgets.QWidget):
                     x = b * 0.25; z0 = zz[int(b)]
                     h = Z_SCALE * (0.9 if 'Apnea' in e.label else 0.6)
                     seg = np.array([[x, ys[k], max(z0, 0)], [x, ys[k], max(z0, 0) + h]])
+                    bi = int(b); self.pick_pts.append((x, ys[k], max(z0, 0) + h, 'event', dict(night=nt.label, time=e.start.strftime('%H:%M'), label=e.label, dur=e.duration, press=float(pr[bi]) if not np.isnan(pr[bi]) else None, leak=float(lk[bi]) if not np.isnan(lk[bi]) else None, at_ceiling=(not np.isnan(pr[bi]) and nt.stats.get('mode') == 'AutoSet' and pr[bi] >= nt.stats.get('press_max', 99) - 0.1))))
+                    self.pick_pts.append((x, ys[k], max(z0, 0) + h / 2, 'event', self.pick_pts[-1][4]))
                     pil = gl.GLLinePlotItem(pos=seg, color=_hex(colr), width=4, antialias=True, mode='lines', glOptions='opaque')
                     self.gl.addItem(pil); self.items.append(pil)
                     cap = gl.GLScatterPlotItem(pos=seg[1:2], color=_hex(colr), size=9, pxMode=True, glOptions='opaque')
@@ -157,6 +211,8 @@ class LandscapeView(QtWidgets.QWidget):
                     Cr = np.zeros((W, 3, 4))
                     for bb in range(W): Cr[bb, :] = stage_col.get(stage_of[bb], _hex('#c9c8c3')) if has[bb] else _hex('#c9c8c3', 0.0)
                     yr = np.array([ys[k] - strip_w / 2 - 1.9, ys[k] - strip_w / 2 - 1.1, ys[k] - strip_w / 2 - 0.3])
+                    for i in range(0, W, 2):
+                        if has[i]: self.pick_pts.append((xs[i], y0 - strip_w / 2 - 1.1, 0.25 * Z_SCALE, 'stage', dict(night=nt.label, time=(base_dt + dt.timedelta(seconds=i * BIN_S)).strftime('%H:%M'), stage=str(stage_of[i]))))
                     rib = gl.GLSurfacePlotItem(x=xs, y=yr, z=Zr, colors=Cr, shader='shaded', smooth=True, glOptions='translucent')
                     self.gl.addItem(rib); self.items.append(rib)
                 if ap.get('hr'):
@@ -178,8 +234,9 @@ class LandscapeView(QtWidgets.QWidget):
                         sp = gl.GLScatterPlotItem(pos=pts, color=cols, size=6 + 4 * low.astype(float).max() if False else 6, pxMode=True, glOptions='translucent')
                         self.gl.addItem(sp); self.items.append(sp)
             # night label at the left end of the strip
-            lab = gl.GLTextItem(pos=(-14, ys[k], 0.5), text=nt.label, color=QtGui.QColor(C['text']), font=QtGui.QFont('Segoe UI', 9))
-            self.gl.addItem(lab); self.items.append(lab)
+            if N <= 14 or k % max(1, int(np.ceil(N / 14))) == 0:
+                lab = gl.GLTextItem(pos=(-14, ys[k], 0.5), text=nt.label if N <= 10 else nt.label.split(' ')[-1], color=QtGui.QColor(C['text']), font=QtGui.QFont('Segoe UI', 9))
+                self.gl.addItem(lab); self.items.append(lab)
         # clock labels along the front
         for hh in range(int(T_START), int(T_END) + 1, 2):
             x = (hh - T_START) * 3600 / BIN_S * 0.25
@@ -190,9 +247,39 @@ class LandscapeView(QtWidgets.QWidget):
         grid.setColor((200, 200, 195, 90)); self.gl.addItem(grid); self.items.append(grid)
         self.center = QtGui.QVector3D(xs[-1] / 2, ys[-1] / 2, 0)
         self.extent = max(xs[-1], ys[-1] + 10)
-        self.caption.setText(f'{N} nights, evening on the left, morning on the right, newest strip at the front')
+        self.caption.setText((f'{nights[0].date.strftime("%A %B %d")}' if N == 1 else f'{N} nights, {nights[-1].label} to {nights[0].label}') + '. Evening on the left, morning on the right, newest strip at the front.')
+        from . import scoring as _sc
+        self.highlight.setText('<b>SETTINGS</b> &nbsp; ' + _sc.settings_text(_sc.settings_summary(nights, self.str_data)))
         self.view_overview()
 
+    # ------------------------------------------------------------------ picking
+    def eventFilter(self, obj, ev):
+        if obj is getattr(self, 'gl', None):
+            if ev.type() == QtCore.QEvent.MouseButtonPress: self._press_pos = ev.position() if hasattr(ev, 'position') else ev.pos()
+            elif ev.type() == QtCore.QEvent.MouseButtonRelease and self._press_pos is not None:
+                p = ev.position() if hasattr(ev, 'position') else ev.pos()
+                if (p - self._press_pos).manhattanLength() < 4: self._pick(p)
+                self._press_pos = None
+        return super().eventFilter(obj, ev)
+    def _pick(self, pos):
+        if not getattr(self, 'pick_pts', None): return
+        from . import explain as _ex
+        w, h = self.gl.width(), self.gl.height(); dpr = self.gl.devicePixelRatioF()
+        vp = self.gl.getViewport(); mvp = self.gl.projectionMatrix(vp, vp) * self.gl.viewMatrix()
+        pts = np.array([[x, y, z] for x, y, z, _, _ in self.pick_pts], dtype=float)
+        best = None; bestd = 1e9
+        for i, (x, y, z) in enumerate(pts):
+            v = mvp.map(QtGui.QVector4D(x, y, z, 1.0))
+            if v.w() <= 0: continue
+            sx = (v.x() / v.w() * 0.5 + 0.5) * w; sy = (1 - (v.y() / v.w() * 0.5 + 0.5)) * h
+            d = (sx - pos.x()) ** 2 + (sy - pos.y()) ** 2
+            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0, 'spo2': 0.7}[kind]   # favour pillars when close
+            if d < bestd: bestd = d; best = i
+        if best is None or bestd > 30 ** 2: self.popup.setVisible(False); return
+        x, y, z, kind, ctx = self.pick_pts[best]
+        self.popup.setText(_ex.point(kind, **ctx) + "<br><span style='color:#8a8985;font-size:11px'>click to close</span>")
+        self.popup.adjustSize(); px = int(min(max(8, pos.x() + 14), w - self.popup.width() - 8)); py = int(min(max(8, pos.y() - self.popup.height() - 10), h - self.popup.height() - 8))
+        self.popup.move(px, py); self.popup.setVisible(True); self.popup.raise_()
     def view_overview(self):
         if HAVE_GL: self.gl.setCameraPosition(pos=self.center, distance=self.extent * 1.25, elevation=32, azimuth=-110)
     def view_along(self):
@@ -242,7 +329,7 @@ class LandscapeKey(QtWidgets.QWidget):
             p.setBrush(QtGui.QColor(c)); p.setPen(QtCore.Qt.NoPen); p.drawEllipse(QtCore.QPointF(X(t), Z(1.35)), 4, 4)
         # pressure line
         p.setPen(QtGui.QPen(QtGui.QColor('#ffffff'), 2)); p.drawLine(QtCore.QPointF(X(0.22), Z(1.1)), QtCore.QPointF(X(0.86), Z(1.1)))
-        p.setPen(QtGui.QPen(QtGui.QColor('#9a9994'), 1)); p.drawLine(QtCore.QPointF(X(0.22), Z(1.1)), QtCore.QPointF(X(0.86), Z(1.1)))
+        p.setPen(QtGui.QPen(QtGui.QColor('#c026d3'), 2)); p.drawLine(QtCore.QPointF(X(0.22), Z(1.1)), QtCore.QPointF(X(0.86), Z(1.1)))
         # stage ribbon in front
         rib_y = base + 14
         for a, b, c in ((0.12, 0.3, C['blue']), (0.3, 0.42, '#0f6e4f'), (0.42, 0.6, C['blue']), (0.6, 0.72, C['violet']), (0.72, 0.76, C['orange']), (0.76, 0.92, C['blue'])):
@@ -266,9 +353,10 @@ class LandscapeKey(QtWidgets.QWidget):
             (('pillar', C['red']), 'Red pillar: obstructive apnea'),
             (('pillar', C['violet']), 'Violet pillar: central apnea'),
             (('pillar', C['orange']), 'Orange pillar: hypopnea'),
-            (('line', '#9a9994'), 'White line: pressure delivered'),
+            (('line', '#c026d3'), 'Magenta line: pressure delivered'),
             (('ribbon', None), 'Ribbon: Watch sleep stages'),
             (('swatch', '#0f6e4f'), '   deep'), (('swatch', C['blue']), '   core'), (('swatch', C['violet']), '   REM'), (('swatch', C['orange']), '   awake'), (('swatch', '#d9d8d3'), '   in bed, not asleep'),
+            (('line', C['aqua']), 'Back line: ring SpO2 (amber dip, red under 90)'),
             (('line', C['red']), 'Red line: Watch heart rate'),
             (('dot', None), 'Dots: Watch SpO2 (red = under 90%)'),
         ]

@@ -48,13 +48,18 @@ def build_context(nights, start, end, diag_ahi=None):
                 ltxt = f"leak={lk[min(i2, len(lk) - 1)] * 60:.0f}" if lk is not None and len(lk) else 'leak=?'
                 evs.append(f"{n.label} {e.start:%H:%M:%S} {e.label} [{e.source}] {e.duration:.0f}s {ptxt} {ltxt} {e.detail}")
     if len(evs) > 400: evs = evs[:400] + [f'... {len(evs) - 400} more events omitted']
+    ox = []
+    for n in sel:
+        rep = scoring.oximetry_report(n)
+        if rep: ox.append(f"{n.label}:"); ox += rep
+    oxtxt = ('\n\n=== Oximeter timeline (ring SpO2 and pulse matched to events and leak by clock time) ===\n' + '\n'.join(ox)) if ox else ''
     total, hit = scoring.validation_summary(sel)
     eq = equipment.context_text(sel, equipment.load_profile(SETTINGS), IDENT)
     return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n=== App synopsis (rule based) ===\n{syn}\n\n"
             f"=== Per night statistics (tab separated; P = set pressure cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed scoring) ===\n"
-            + '\n'.join(table) + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs)
+            + '\n'.join(table) + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs) + oxtxt
             + "\n\n=== Method notes ===\nResMed stamps event end; app subtracts duration. App hypopnea = 30% flow drop >= 10 s without desaturation check (over-counts). "
-              f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter is listed above."
+              f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter timeline section is present above; when it is, use it to say which events cost oxygen and which dips look like sensor artifact."
             + "\n\n" + eq)
 
 
@@ -67,23 +72,33 @@ class AskWorker(QtCore.QThread):
         if self.messages is None:      # connection test: list models
             req = urllib.request.Request('https://api.anthropic.com/v1/models', headers=hdr)
         else:
-            body = json.dumps({'model': self.model, 'max_tokens': 2000, 'system': self.system, 'messages': self.messages}).encode()
-            req = urllib.request.Request(API_URL, data=body, headers=hdr)
+            req = None
         t0 = dt.datetime.now()
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
-                raw = r.read()
-            _log(f'{req.full_url} -> {len(raw)} bytes in {(dt.datetime.now() - t0).total_seconds():.1f} s')
-            j = json.loads(raw)
             if self.messages is None:
-                ids = [m.get('id') for m in j.get('data', [])]
+                with urllib.request.urlopen(req, timeout=180) as r:
+                    raw = r.read()
+                j = json.loads(raw); ids = [m.get('id') for m in j.get('data', [])]
                 self.done.emit('Connection OK. Models available to this key: ' + ', '.join(ids))
                 return
-            text = ''.join(b.get('text', '') for b in j.get('content', []) if b.get('type') == 'text')
+            # Newer models may spend part of the budget thinking before any text appears, so the budget is generous
+            # and a reply that ran out before producing text is retried once with a larger one.
+            text = ''; j = {}
+            for max_tokens in (8000, 24000):
+                body = json.dumps({'model': self.model, 'max_tokens': max_tokens, 'system': self.system, 'messages': self.messages}).encode()
+                req = urllib.request.Request(API_URL, data=body, headers=hdr)
+                with urllib.request.urlopen(req, timeout=300) as r:
+                    raw = r.read()
+                _log(f'{req.full_url} max_tokens={max_tokens} -> {len(raw)} bytes in {(dt.datetime.now() - t0).total_seconds():.1f} s')
+                j = json.loads(raw)
+                text = ''.join(b.get('text', '') for b in j.get('content', []) if b.get('type') == 'text')
+                if text.strip() or j.get('stop_reason') != 'max_tokens': break
+                _log('no text before the token budget ran out; retrying with a larger budget')
             if not text.strip():
                 _log('EMPTY ANSWER, raw response: ' + raw.decode('utf-8', 'ignore')[:2000])
                 self.failed.emit('The API returned no text. Stop reason: ' + str(j.get('stop_reason')) + '. Raw response is in ask_log.txt.')
                 return
+            if j.get('stop_reason') == 'max_tokens': text += '\n\n[Answer cut off at the length limit.]'
             self.done.emit(text)
         except urllib.error.HTTPError as e:
             try: msg = json.loads(e.read()).get('error', {}).get('message', str(e))

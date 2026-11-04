@@ -13,10 +13,11 @@ HELP = """
 
 <h2>Step 1. Install SleepScope</h2>
 <ol>
-<li>Download <b>SleepScope-Windows-x64.zip</b> from the releases page (github.com/robertb-design/sleepscope/releases).</li>
-<li>Right-click the zip, <b>Extract All</b>, and choose a permanent folder such as <b>C:\\SleepScope</b>. Do not run it from inside the zip.</li>
-<li>Double-click <b>SleepScope.exe</b>. The first time, Windows SmartScreen shows "Windows protected your PC" because the file is not code-signed. Click <b>More info</b>, then <b>Run anyway</b>. This happens once.</li>
-<li>Optional: right-click SleepScope.exe, Send to, Desktop (create shortcut).</li>
+<li>Download <b>SleepScope-Setup.exe</b> from github.com/robertb-design/SleepScope/releases/latest.</li>
+<li>Double-click it. The first time, Windows SmartScreen shows "Windows protected your PC" because the file is not code-signed. Click <b>More info</b>, then <b>Run anyway</b>. This happens once.</li>
+<li>Click through the installer, leaving <b>Create a desktop shortcut</b> ticked. It installs for your user only, so no administrator password is needed, and it appears in Settings, Apps, Installed apps like any other program.</li>
+<li>Start SleepScope from the desktop shortcut or the Start menu.</li>
+<li>Prefer no installer? <b>SleepScope-Windows-x64.zip</b> on the same page is the portable version: extract it to a permanent folder and double-click SleepScope.exe.</li>
 </ol>
 <div class="box">Running from source instead (the folder with SleepScope.bat): double-click <b>install.bat</b> once, then <b>SleepScope.bat</b> to start.</div>
 
@@ -41,7 +42,7 @@ HELP = """
 <h2>Step 4. Read your results</h2>
 <ol>
 <li><b>Synopsis</b>: pick a date range (Last 7, Last 14, Last 30 or All) and read. It covers hours used, event control, event mix, settings changes, leak, flow limitation, breathing, oxygen and what to raise with the prescriber. Type your diagnostic AHI from the sleep study into the box to see the percent reduction. <b>Save HTML</b> or <b>Copy</b> to hand it to the doctor.</li>
-<li><b>3D Landscape</b>: the week as terrain. Height is how freely you breathed; red pillars are events; blue pools are leak; grey is mask off. The key on the right explains each colour. Drag to rotate, wheel to zoom.</li>
+<li><b>3D Landscape</b>: the week as terrain. Height is how freely you breathed; red pillars are events; blue pools are leak; grey is mask off. The key on the right explains each colour. Click any pillar, pool or patch of ground and a box explains it in plain language. Drag to rotate, wheel to zoom.</li>
 <li><b>Night</b>: click a night on the left. Use <b>◀ event / event ▶</b> to jump between events, the zoom buttons for 30 s to a whole night, and hover for every value at the cursor.</li>
 <li><b>Statistics</b>: every number for every night; <b>Export statistics CSV</b> for a spreadsheet.</li>
 </ol>
@@ -62,7 +63,7 @@ HELP = """
 <ol>
 <li>Wear the ring every night with the CPAP. Charge it during the day.</li>
 <li>In the ring's phone app (ViHealth for Wellue), open the night, choose export or share, and pick <b>CSV</b>. Send the file to the PC (email it to yourself, AirDrop, or the app's PC software).</li>
-<li>In SleepScope click <b>Import oximeter CSV…</b> and pick the file. Readings are matched to nights by time.</li>
+<li>Save the CSV into a folder SleepScope watches: the SD card itself, your Dropbox or OneDrive folder, Downloads, or any folder you choose with <b>Companion folder…</b> on the toolbar. Every time a card is loaded, SleepScope finds the ring files there on its own and attaches them by time; the status bar at the bottom reports how many. <b>Import oximeter CSV…</b> is still there for a file somewhere else.</li>
 <li>Look at the Synopsis oxygen section, the SpO2 and pulse panels in the Night tab, and the SpO2 columns in Statistics.</li>
 </ol>
 
@@ -87,7 +88,7 @@ HELP = """
 <li>Each morning (or each week): card out, into the PC, click <b>Reload</b> (or Open SD card if it is a different folder), read the Synopsis, card back in the machine.</li>
 <li>Before an appointment, click <b>Doctor visit PDF…</b> on the Synopsis tab and print it or bring it on your phone.</li>
 <li>Copy the whole card to a folder on the PC every month or so (for example Documents\\CPAP\\2026-10). Cards fail and get reformatted; the copy is your history.</li>
-<li>When a new SleepScope version is released, download the zip again and extract it over the same folder; your settings, key and saved answers are kept.</li>
+<li>When a new SleepScope version is released, run the new SleepScope-Setup.exe; it installs over the old one and your settings, key and saved answers are kept.</li>
 </ol>
 
 <h2>The numbers that matter, in plain words</h2>

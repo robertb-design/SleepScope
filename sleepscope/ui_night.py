@@ -41,6 +41,10 @@ class NightView(QtWidgets.QWidget):
         bar = QtWidgets.QHBoxLayout(); lay.addLayout(bar)
         self.title = QtWidgets.QLabel('No night selected'); self.title.setStyleSheet('font-weight:600; font-size:13px')
         bar.addWidget(self.title); bar.addStretch()
+        self.str_data = None
+        self.highlight = QtWidgets.QLabel(''); self.highlight.setTextFormat(QtCore.Qt.RichText); self.highlight.setWordWrap(True)
+        self.highlight.setStyleSheet('background:#fff4d6; border:1px solid #eda100; border-left:6px solid #eda100; border-radius:8px; padding:6px 10px; font-size:12.5px; color:#0b0b0b')
+        lay.addWidget(self.highlight)
         for lab, secs in [('30 s', 30), ('2 min', 120), ('10 min', 600), ('1 h', 3600), ('Night', None)]:
             b = QtWidgets.QPushButton(lab); b.setFixedWidth(56); b.clicked.connect(lambda _, s=secs: self.zoom_to(s)); bar.addWidget(b)
         self.prev_btn = QtWidgets.QPushButton('◀ event'); self.next_btn = QtWidgets.QPushButton('event ▶')
@@ -57,6 +61,8 @@ class NightView(QtWidgets.QWidget):
             a = m.addAction(title); a.setCheckable(True); a.setChecked(key in ('flow', 'press', 'leak', 'flowlim', 'vent', 'tv', 'apple_stage', 'apple_hr'))
             a.toggled.connect(self.update_visibility); self.panel_actions[key] = a
         self.panel_menu.setMenu(m); bar.addWidget(self.panel_menu)
+        self.explain_btn = QtWidgets.QPushButton('Explain'); self.explain_btn.setCheckable(True); self.explain_btn.setToolTip('Plain language: what each panel shows, what stands out tonight, what to improve')
+        self.explain_btn.toggled.connect(lambda v: self.explain.setVisible(v)); bar.addWidget(self.explain_btn)
 
         # overview strip (whole night) with region selector
         self.ov = pg.PlotWidget(axisItems={'bottom': TimeAxis(dt.datetime(2000, 1, 1), orientation='bottom')}); self.ov.setFixedHeight(70); style_plot(self.ov.getPlotItem()); self.ov.hideAxis('left')
@@ -68,6 +74,7 @@ class NightView(QtWidgets.QWidget):
         self.gl = pg.GraphicsLayoutWidget(); self.gl.setBackground('w'); lay.addWidget(self.gl, 1)
         self.gl.ci.layout.setSpacing(2)
         self.label = QtWidgets.QLabel(''); self.label.setStyleSheet('color:#52514e; font-size:11px'); lay.addWidget(self.label)
+        self.explain = QtWidgets.QTextBrowser(); self.explain.setFixedHeight(190); self.explain.setStyleSheet('font-size:12.5px; padding:6px; border:1px solid #e6e5e2; border-radius:6px'); self.explain.setVisible(False); lay.addWidget(self.explain)
         self._building = False; self.event_list = []; self.event_idx = -1
         self._build_panels(dt.datetime(2000, 1, 1))
 
@@ -104,7 +111,16 @@ class NightView(QtWidgets.QWidget):
         self.t0 = night.sessions[0].start
         self._build_panels(self.t0)
         self.ov.setAxisItems({'bottom': TimeAxis(self.t0, orientation='bottom')}); style_plot(self.ov.getPlotItem())
-        self.title.setText(f"{night.date.strftime('%A %B %d, %Y')}   {night.hours:.2f} h in {len(night.sessions)} session(s)")
+        def sess_txt(s):
+            pr = s.ch.get('Press'); 
+            if pr is None or not len(pr): return s.start.strftime('%H:%M')
+            tail = pr[max(int(len(pr) * 0.15), min(900, len(pr) // 2)):]
+            fixed = len(tail) and float(np.std(tail)) < 0.05
+            return f"{s.start.strftime('%H:%M')} ({'CPAP ' + f'{pr.max():.0f}' if fixed else f'{pr.min():.0f} to {pr.max():.0f}'})"
+        self.title.setText(f"{night.date.strftime('%A %B %d, %Y')}   {night.hours:.2f} h, sessions: " + ', '.join(sess_txt(s) for s in night.sessions))
+        from . import scoring as _sc, explain as _ex
+        self.highlight.setText('<b>SETTINGS</b> &nbsp; ' + _sc.settings_text(_sc.settings_summary([night], self.str_data)))
+        self.explain.setHtml(_ex.night(night))
         total_end = (night.sessions[-1].end - self.t0).total_seconds()
         pen = {k: pg.mkPen(c, width=1) for k, c in dict(flow=C['blue'], press=C['blue'], mask=C['aqua'], epr=C['grey'], leak=C['orange'],
                                                       flowlim=C['violet'], snore=C['magenta'], vent=C['aqua'], rr=C['blue'], tv=C['aqua'], mv=C['green'],

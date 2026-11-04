@@ -277,12 +277,13 @@ def night_stats(nt: Night) -> dict:
         spo2_pct_lt90=float((spv < 90).mean() * 100) if len(spv) else np.nan, spo2_pct_lt88=float((spv < 88).mean() * 100) if len(spv) else np.nan, ODI=odi / (len(spv) / 3600) if len(spv) > 600 else np.nan, spo2_minutes_lt88=float((spv < 88).sum() / 60) if len(spv) else np.nan,
         pulse_mean=float(puv.mean()) if len(puv) else np.nan, pulse_min=float(puv.min()) if len(puv) else np.nan, pulse_max=float(puv.max()) if len(puv) else np.nan,
     )
+    d['setting'] = pressure_label(d)
     nt.stats = d
     return d
 
 
 STAT_COLUMNS = [
-    ('label', 'Night', ''), ('hours', 'Hours', '{:.2f}'), ('sessions', 'Sess', '{}'), ('mode', 'Mode', ''),
+    ('label', 'Night', ''), ('hours', 'Hours', '{:.2f}'), ('sessions', 'Sess', '{}'), ('mode', 'Mode', ''), ('setting', 'Pressure setting', ''),
     ('AHI', 'AHI machine', '{:.2f}'), ('OA', 'OA', '{}'), ('CA', 'CA', '{}'), ('H', 'H', '{}'), ('arousals', 'Arousal', '{}'),
     ('app_AHI', 'AHI app', '{:.2f}'), ('app_unflagged', 'Unflagged AP', '{}'), ('app_RDI', 'RDI app', '{:.2f}'), ('app_flowlim_runs', 'FL runs', '{}'), ('app_RERA_like', 'RERA-like', '{}'),
     ('press_min', 'P min', '{:.1f}'), ('press_med', 'P med', '{:.1f}'), ('press_95', 'P 95%', '{:.1f}'), ('press_max', 'P max', '{:.1f}'),
@@ -301,3 +302,132 @@ def fmt(key, val):
     if val is None or (isinstance(val, float) and np.isnan(val)): return ''
     try: return (_FMT.get(key) or '{}').format(val)
     except Exception: return str(val)
+
+
+# ----------------------------------------------------------------------------- settings highlight
+import re as _re
+def settings_summary(nights, str_data=None):
+    """Hi/low pressure, mode, EPR, and humidifier/tube settings for a set of nights.
+    Pressure comes from the trace (verified). Humidity and temperature come from STR.edf when loaded; the STR signal names
+    are matched loosely (HumLevel, Temp, ClimateControl, HumEnable, TempEnable) because they vary by firmware."""
+    out = {}
+    if nights:
+        pmin = min(n.stats['press_min'] for n in nights if np.isfinite(n.stats.get('press_min', np.nan)) or False) if any(np.isfinite(n.stats.get('press_min', np.nan)) for n in nights) else np.nan
+        pmax = max(n.stats['press_max'] for n in nights if np.isfinite(n.stats.get('press_max', np.nan))) if any(np.isfinite(n.stats.get('press_max', np.nan)) for n in nights) else np.nan
+        modes = {n.stats['mode'] for n in nights}
+        out.update(press_min=pmin, press_max=pmax, mode='/'.join(sorted(modes)), epr=float(np.nanmedian([n.stats.get('epr', np.nan) for n in nights])) if nights else np.nan,
+                   press_95=float(np.nanmean([n.stats.get('press_95', np.nan) for n in nights])))
+    if str_data and 'signals' in str_data and nights:
+        sig = str_data['signals']; days = str_data['days']
+        def find(*pats):
+            for lab in sig:
+                if any(_re.search(p, lab, _re.I) for p in pats): return lab
+            return None
+        idx = [days.index(n.date) for n in nights if n.date in days]
+        def val(lab):
+            if not lab or not idx: return None
+            v = [sig[lab][i] for i in idx if i < len(sig[lab])]
+            v = [x for x in v if np.isfinite(x) and x >= 0]
+            return (min(v), max(v)) if v else None
+        hum_on = val(find(r'HumEnable', r'Hum.*Enab')); hum = val(find(r'HumLevel', r'Humid.*Level', r'^S\.Hum$'))
+        temp_on = val(find(r'TempEnable', r'Temp.*Enab')); temp = val(find(r'S\.Temp$', r'TubeTemp', r'Temp$'))
+        cc = val(find(r'ClimateControl', r'Climate')); smin = val(find(r'MinPress')); smax = val(find(r'MaxPress')); cpap = val(find(r'S\.C\.Press', r'C\.Press', r'CPAP.*Press'))
+        out.update(hum=hum, hum_on=hum_on, temp=temp, temp_on=temp_on, climate=cc, set_min=smin, set_max=smax, set_cpap=cpap, str_found=True)
+    else:
+        out['str_found'] = False
+    return out
+
+
+def pressure_label(stats):
+    """Short pressure setting text for a night, from the trace: 'AutoSet 4 to 12' or 'CPAP 9'."""
+    lo, hi = stats.get('press_min', np.nan), stats.get('press_max', np.nan)
+    if not (np.isfinite(lo) and np.isfinite(hi)): return ''
+    return f"CPAP {hi:.0f}" if stats.get('mode') == 'CPAP' else f"AutoSet {lo:.0f} to {hi:.0f}"
+
+
+def settings_text(sm, html=True):
+    def rng(v, fmt='{:g}'):
+        if v is None: return None
+        a, b = v; return fmt.format(a) if abs(a - b) < 1e-6 else f"{fmt.format(a)} to {fmt.format(b)}"
+    b = (lambda t: f'<b>{t}</b>') if html else (lambda t: t)
+    parts = []
+    if sm.get('set_min') and sm.get('set_max') and sm['set_max'][1] > 0 and (sm.get('set_min')[1] != sm.get('set_max')[1]):
+        parts.append(f"Pressure set {b('low ' + rng(sm['set_min']) + ', high ' + rng(sm['set_max']) + ' cmH2O')} (AutoSet)")
+    elif sm.get('set_cpap') and sm['set_cpap'][1] > 0 and sm.get('mode', '').startswith('CPAP'):
+        parts.append(f"Pressure set {b(rng(sm['set_cpap']) + ' cmH2O')} (CPAP)")
+    elif np.isfinite(sm.get('press_min', np.nan)):
+        if sm.get('mode') == 'CPAP': parts.append('Pressure ' + b(f"fixed {sm['press_max']:.0f} cmH2O") + f" (ramp from {sm['press_min']:.0f}, from the trace)")
+        else: parts.append('Pressure ' + b(f"low {sm['press_min']:.0f}, high {sm['press_max']:.0f} cmH2O") + f" ({sm.get('mode', '')}, from the trace)")
+    if np.isfinite(sm.get('epr', np.nan)) and sm['epr'] > 0: parts.append(f"EPR {b(f'{sm["epr"]:.0f}')}")
+    if sm.get('str_found'):
+        if sm.get('hum_on') and sm['hum_on'][1] == 0: parts.append(f"Humidifier {b('off')}")
+        elif sm.get('hum') is not None: parts.append(f"Humidity {b(rng(sm['hum']))}" + (' (Climate Control auto)' if sm.get('climate') and sm['climate'][1] > 0 else ''))
+        else: parts.append('Humidity: not in this STR file')
+        if sm.get('temp_on') and sm['temp_on'][1] == 0: parts.append(f"Tube heat {b('off')}")
+        elif sm.get('temp') is not None:
+            lo, hi = sm['temp']; unit = '°F' if hi > 45 else '°C'
+            parts.append(f"Tube temp {b(rng(sm['temp']) + ' ' + unit)}")
+        else: parts.append('Tube temp: not in this STR file')
+    else:
+        parts.append('Humidity and tube temp: open the card root (STR.edf) to see them')
+    return '   ·   '.join(parts)
+
+
+# ----------------------------------------------------------------------------- oximetry timeline for Claude and the explain panes
+def oximetry_report(night):
+    """Plain-text lines tying the oximeter trace (1 Hz per session) to events and leak, so a reader can see which
+    events cost oxygen. Empty list when the night has no oximetry."""
+    out = []
+    for s in night.sessions:
+        sp = getattr(s, 'spo2', None); pu = getattr(s, 'pulse', None)
+        if sp is None or len(sp) < 600 or not np.any(sp > 0): continue
+        sp = np.asarray(sp, dtype=float); pu = np.asarray(pu, dtype=float) if pu is not None else np.full_like(sp, np.nan)
+        valid = sp > 50
+        if valid.sum() < 600: continue
+        spv = np.where(valid, sp, np.nan)
+        # rolling 2 minute median baseline (previous 120 s)
+        base = np.full_like(spv, np.nan)
+        for i in range(len(spv)):
+            w = spv[max(0, i - 120):i + 1]; w = w[~np.isnan(w)]
+            if len(w): base[i] = np.median(w)
+        below = (spv <= base - 3) & valid
+        evs = sorted(s.machine_events + [e for e in s.app_events if 'Flow Limitation' not in e.label], key=lambda e: e.start)
+        leaks = [((e.start - s.start).total_seconds(), (e.start - s.start).total_seconds() + e.duration) for e in leak_episodes(s)]
+        dips = []; i = 0
+        while i < len(below):
+            if below[i]:
+                j = i
+                while j < len(below) and below[j]: j += 1
+                if j - i >= 10:
+                    seg = spv[i:j]; k = i + int(np.nanargmin(seg)); t = s.start + dt.timedelta(seconds=i)
+                    pb = np.nanmean(pu[max(0, i - 30):i]) if i else np.nan; pa = np.nanmean(pu[k:k + 30])
+                    near = min(evs, key=lambda e: abs((e.start - t).total_seconds()), default=None)
+                    off = (t - near.start).total_seconds() if near is not None else None
+                    in_leak = any(a <= (t - s.start).total_seconds() <= b for a, b in leaks)
+                    rose = (not np.isnan(pb)) and (not np.isnan(pa)) and pa - pb >= 4
+                    deep_brief = (base[i] - np.nanmin(seg) >= 6) and (j - i < 20) and not rose
+                    tag = 'likely sensor (deep, brief, no pulse response)' if deep_brief else ('pulse rose, consistent with arousal' if rose else 'no pulse response')
+                    link = f"{near.label} [{near.source}] {abs(off):.0f} s {'before' if off > 0 else 'after'}" if near is not None and abs(off) <= 90 else 'no scored event within 90 s'
+                    dips.append(f"  {t:%H:%M:%S} dip {base[i]:.0f} to {np.nanmin(seg):.0f}% for {j - i} s, pulse {pb:.0f} to {pa:.0f}; {tag}; nearest event: {link}" + ('; during large leak' if in_leak else ''))
+                i = j
+            else: i += 1
+        # response to machine events: SpO2 minimum within 90 s after each event start
+        resp = []
+        for e in s.machine_events:
+            a = int((e.start - s.start).total_seconds()); b = min(len(spv), a + 90)
+            if 0 <= a < len(spv):
+                w = spv[a:b]; w = w[~np.isnan(w)]
+                if len(w): resp.append((e, float(np.nanmedian(spv[max(0, a - 60):a])) if a else np.nan, float(w.min())))
+        followed = sum(1 for e, b0, m in resp if not np.isnan(b0) and b0 - m >= 3)
+        hours = valid.sum() / 3600
+        out.append(f"Session {s.start:%H:%M} ({hours:.1f} h of oximetry): {len(dips)} desaturations of 3% or more lasting 10 s or longer ({len(dips) / hours:.1f}/h by this strict count); "
+                   f"{followed} of {len(resp)} machine-scored events were followed by a 3% drop within 90 s.")
+        out += dips if dips else ['  no 3% desaturations']
+        for a, b in leaks:
+            w = spv[int(a):int(b)]; w = w[~np.isnan(w)]
+            if len(w): out.append(f"  large leak {s.start + dt.timedelta(seconds=a):%H:%M} for {b - a:.0f} s: SpO2 min {w.min():.0f}, mean {w.mean():.1f}")
+        # pulse surges as an arousal proxy
+        if not np.all(np.isnan(pu)):
+            surges = sum(1 for i in range(0, len(pu) - 20, 10) if pu[i + 20] - pu[i] >= 8)
+            out.append(f"  pulse surges of 8 bpm or more within 20 s: {surges} ({surges / hours:.1f}/h), a rough arousal proxy")
+    return out

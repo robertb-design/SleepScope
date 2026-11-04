@@ -37,11 +37,51 @@ def app_icon():
     return ic
 
 
+def version_text():
+    from . import version as _v
+    import datetime as _dt
+    v = _v.VERSION; d = _v.BUILD_DATE
+    if v == 'source':
+        return 'Running from source', _dt.date.today().strftime('%B %d, %Y')
+    try: d = _dt.date.fromisoformat(d).strftime('%B %d, %Y')
+    except Exception: pass
+    return f'Version {v}', d
+
+
+def show_about(parent=None):
+    """About box: version, date issued, copyright. Opened from any logo."""
+    ver, issued = version_text()
+    dlg = QtWidgets.QDialog(parent); dlg.setWindowTitle('About SleepScope'); dlg.setFixedWidth(440)
+    dlg.setStyleSheet('QDialog { background: white; } QLabel { color: #0b0b0b; }')
+    lay = QtWidgets.QVBoxLayout(dlg); lay.setContentsMargins(24, 22, 24, 18); lay.setSpacing(6)
+    top = QtWidgets.QHBoxLayout(); top.setSpacing(14)
+    mark = QtWidgets.QLabel(); mark.setPixmap(logo_pixmap(56, on_dark=False)); top.addWidget(mark, 0, QtCore.Qt.AlignTop)
+    col = QtWidgets.QVBoxLayout(); col.setSpacing(2)
+    t = QtWidgets.QLabel('SleepScope'); t.setStyleSheet('font-size: 22px; font-weight: 800'); col.addWidget(t)
+    col.addWidget(QtWidgets.QLabel('CPAP data, read in plain language.'))
+    top.addLayout(col, 1); lay.addLayout(top)
+    lay.addSpacing(8)
+    for k, v in ((ver, ''), ('Issued', issued), ('Copyright', f'\u00a9 {_year()} Robert Barmore. All rights reserved.'), ('License', 'MIT License; source and releases at github.com/robertb-design/SleepScope')):
+        row = QtWidgets.QLabel(f'<b>{k}</b>' + (f'&nbsp;&nbsp;{v}' if v else '')); row.setWordWrap(True); row.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse); lay.addWidget(row)
+    note = QtWidgets.QLabel('SleepScope is a reading of the data, not a medical device. Decisions about therapy belong with you and your prescriber.')
+    note.setWordWrap(True); note.setStyleSheet('color:#52514e; font-size: 11px; margin-top: 8px'); lay.addWidget(note)
+    btn = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok); btn.accepted.connect(dlg.accept); lay.addWidget(btn)
+    dlg.exec()
+
+
+def _year():
+    import datetime as _dt
+    return max(2026, _dt.date.today().year)
+
+
 class LogoWidget(QtWidgets.QWidget):
-    """Logo mark plus wordmark, for the toolbar (dark background)."""
+    """Logo mark plus wordmark, for the toolbar (dark background). Click opens About."""
     def __init__(self, size=30, wordmark=True):
         super().__init__(); self.size_ = size; self.wordmark = wordmark
         self.setFixedSize(size + (118 if wordmark else 0) + 8, size + 4)
+        self.setCursor(QtCore.Qt.PointingHandCursor); self.setToolTip('About SleepScope')
+    def mousePressEvent(self, ev):
+        if ev.button() == QtCore.Qt.LeftButton: show_about(self.window())
     def paintEvent(self, ev):
         p = QtGui.QPainter(self); p.setRenderHint(QtGui.QPainter.Antialiasing)
         paint_logo(p, QtCore.QRectF(2, 2, self.size_, self.size_), on_dark=True)
@@ -57,7 +97,8 @@ class PageBanner(QtWidgets.QFrame):
         c2 = QtGui.QColor(colour).darker(135).name()
         self.setStyleSheet(f'QFrame {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {c2}, stop:1 {colour}); border-radius: 10px; }} QLabel {{ color: white; background: transparent; }}')
         lay = QtWidgets.QHBoxLayout(self); lay.setContentsMargins(14, 6, 14, 6); lay.setSpacing(12)
-        mark = QtWidgets.QLabel(); mark.setPixmap(logo_pixmap(34, on_dark=True)); lay.addWidget(mark)
+        mark = QtWidgets.QLabel(); mark.setPixmap(logo_pixmap(34, on_dark=True)); mark.setCursor(QtCore.Qt.PointingHandCursor); mark.setToolTip('About SleepScope')
+        mark.mousePressEvent = lambda ev, w=self: show_about(w.window()); lay.addWidget(mark)
         col = QtWidgets.QVBoxLayout(); col.setSpacing(0); lay.addLayout(col, 1)
         t = QtWidgets.QLabel(title); t.setStyleSheet('font-size:17px; font-weight:800'); col.addWidget(t)
         s = QtWidgets.QLabel(subtitle); s.setStyleSheet('font-size:11px; color:#e8eefb'); s.setWordWrap(True); col.addWidget(s)

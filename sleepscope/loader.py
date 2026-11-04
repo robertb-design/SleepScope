@@ -234,7 +234,7 @@ def import_oximeter_csv(path, nights):
         return None
     ti, si, pi = col('time', 'date'), col('spo2', 'oxygen', 'o2'), col('pulse', 'hr', 'heart')
     if ti is None or si is None: return 0
-    fmts = ['%H:%M:%S %m/%d/%Y', '%I:%M:%S %p %m/%d/%Y', '%m/%d/%Y %I:%M:%S %p', '%Y-%m-%d %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%H:%M:%S %d/%m/%Y', '%Y-%m-%dT%H:%M:%S']
+    fmts = ['%H:%M:%S %b %d %Y', '%I:%M:%S %p %b %d %Y', '%b %d %Y %H:%M:%S', '%d %b %Y %H:%M:%S', '%H:%M:%S %m/%d/%Y', '%I:%M:%S %p %m/%d/%Y', '%m/%d/%Y %I:%M:%S %p', '%Y-%m-%d %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%H:%M:%S %d/%m/%Y', '%Y-%m-%dT%H:%M:%S']
     ts, sp, pu = [], [], []
     fmt = None
     for r in rows[1:]:
@@ -268,3 +268,30 @@ def import_oximeter_csv(path, nights):
             s.spo2 = np.nan_to_num(s.spo2, nan=-1); s.pulse = np.nan_to_num(s.pulse, nan=-1)
             filled += 1
     return filled
+
+
+# ----------------------------------------------------------------------------- find companion files near the card
+def find_companion_files(folders, max_depth=2):
+    """Look through the given folders (a few levels deep) for oximeter CSV exports (Wellue O2Ring and similar: a header
+    with a time column and an oxygen/SpO2 column) and SleepScope Health Shortcut files. Returns (oximeter_paths, health_paths)."""
+    ox, health = [], []
+    seen = set()
+    for folder in folders:
+        if not folder or not os.path.isdir(folder): continue
+        folder = os.path.abspath(folder)
+        if folder in seen: continue
+        seen.add(folder); base_depth = folder.rstrip(os.sep).count(os.sep)
+        for dirpath, dirnames, filenames in os.walk(folder):
+            if dirpath.count(os.sep) - base_depth >= max_depth: dirnames[:] = []
+            dirnames[:] = [d for d in dirnames if not d.startswith('.') and d.lower() not in ('datalog', 'node_modules', 'appdata')]
+            for fn in filenames:
+                low = fn.lower()
+                if not low.endswith(('.csv', '.txt')): continue
+                path = os.path.join(dirpath, fn)
+                try:
+                    if os.path.getsize(path) > 200 * 1024 * 1024: continue
+                    with open(path, 'r', encoding='utf-8-sig', errors='ignore') as f: head = f.readline().lower()
+                except OSError: continue
+                if ('oxygen' in head or 'spo2' in head) and ('time' in head or 'date' in head): ox.append(path)
+                elif low.endswith('.txt') and (head.startswith('sleep,') or head.startswith('heart rate,') or head.startswith('blood oxygen,')): health.append(path)
+    return sorted(set(ox)), sorted(set(health))

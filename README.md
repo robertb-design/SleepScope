@@ -3,10 +3,22 @@
 Desktop analysis for ResMed AirSense 10 / 11 SD card data. Reads the raw EDF files, re-scores events from the 25 Hz flow
 signal, and shows the machine's scoring next to its own.
 
+## Phone version
+A web app that runs in Safari on iPhone (and any phone) from https://robertb-design.github.io/sleepscope/ . Add it to the home screen and it
+behaves like an app and works offline. Data gets in through an SD card reader and the Files app (compress the DATALOG folder, pick the zip).
+It scores nights, writes the synopsis, charts each night, zooms into events, draws the 3D landscape (WebGL), imports oximeter CSV and talks to Claude.
+Apple Health import is desktop only. Source is in `docs/`.
+
 ## Try it without a card
 **Load sample data** on the toolbar generates seven nights for an imaginary patient in ResMed's file format (synthetic, no real person).
 
 ## Install (Windows)
+Easiest: download **SleepScope-Setup.exe** from https://github.com/robertb-design/SleepScope/releases/latest and double-click it.
+It installs per user (no administrator password), adds a desktop shortcut and a Start menu entry, and appears under Settings, Apps,
+Installed apps for uninstalling. Windows SmartScreen warns the first time because the file is not code-signed: "More info", then "Run anyway".
+New versions install over the old one; settings, API key and saved answers are kept.
+
+From source instead:
 1. Unzip this folder somewhere permanent (for example `C:\SleepScope`).
 2. Double-click `install.bat`. It installs Python from python.org if missing, sets up a private environment, checks it, and puts a shortcut on the desktop. It writes `install_log.txt` next to itself; if anything fails, that file says why.
 3. Double-click `SleepScope.bat` (or the shortcut). Click **Open SD card…** and pick the card root (the drive letter, e.g. `F:\`)
@@ -16,7 +28,7 @@ signal, and shows the machine's scoring next to its own.
 Run `build_exe.bat` once (after install.bat). It packages Python, the libraries and the app into `dist\SleepScope\SleepScope.exe` and zips
 that folder as `SleepScope-Windows-x64.zip` (about 150 MB). Send the zip; recipients unzip it anywhere and double-click `SleepScope.exe`.
 Windows SmartScreen will warn the first time because the exe is not code-signed: click "More info", then "Run anyway".
-Ready-made downloads: https://github.com/robertb-design/sleepscope/releases (built automatically by GitHub on every update).
+Ready-made downloads (installer and portable zip): https://github.com/robertb-design/SleepScope/releases (built automatically by GitHub on every update).
 
 ## Tabs
 - **Start here** a home screen with seven numbered, colour coded step cards (get data in, read the synopsis, see the picture, connect Claude, add an oximeter, add Apple Health, record your equipment) that show what is done and open the right place.
@@ -39,7 +51,7 @@ With Apple Health imported, a flat ribbon in front of each strip shows the Watch
 night, a red line above it is heart rate, and dots are Watch SpO2 readings (red when under 90%). Ribbon over grey floor is sleep with the mask off.
 
 ## Synopsis
-Pick a date range (or Last 7 / 14 / 30 / All) and the tab writes a plain English report: usage, event control, event mix, central apnea and periodic
+On opening, the app shows the Synopsis for the most recent night. Pick a date range (Last night / 7 / 14 / 30 / All) and the tab writes a plain English report: usage, event control, event mix, central apnea and periodic
 breathing checks, settings changes and how AHI and flow limitation behaved under each, leak, breathing mechanics, oxygen (when an oximeter is attached),
 Apple Watch sleep (when imported), and a short "what this means" list. Enter your diagnostic AHI from the sleep study to get the percent reduction.
 Copy or save as HTML to send to the prescriber.

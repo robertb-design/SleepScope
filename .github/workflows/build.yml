@@ -13,18 +13,38 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install -r requirements.txt pyinstaller
+      - name: Stamp version
+        shell: pwsh
+        run: |
+          $d = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+          Set-Content -Path sleepscope/version.py -Value "VERSION = `"1.0.${{ github.run_number }}`"`nBUILD_DATE = `"$d`"`n"
+          Get-Content sleepscope/version.py
       - run: pyinstaller --noconfirm --clean SleepScope.spec
       - run: Copy-Item README.md dist/SleepScope/
       - run: Compress-Archive -Path dist/SleepScope/* -DestinationPath SleepScope-Windows-x64.zip
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc /DMyAppVersion=1.0.${{ github.run_number }} installer.iss
+          Get-ChildItem installer_out
       - uses: actions/upload-artifact@v4
-        with: { name: SleepScope-Windows-x64, path: SleepScope-Windows-x64.zip }
+        with:
+          name: SleepScope-Windows-x64
+          path: |
+            SleepScope-Windows-x64.zip
+            installer_out/SleepScope-Setup.exe
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: SleepScope 1.0.${{ github.run_number }}
           body: |
-            Windows package. Unzip anywhere and double-click SleepScope.exe. No Python needed.
-            Windows SmartScreen warns the first time because the file is not code-signed: choose "More info", then "Run anyway".
-          files: SleepScope-Windows-x64.zip
+            **SleepScope-Setup.exe** (recommended): double-click to install. Adds a desktop shortcut, a Start menu entry and an Apps and features entry for uninstalling. Installs per user, no administrator password needed.
+            **SleepScope-Windows-x64.zip**: portable version. Unzip anywhere and double-click SleepScope.exe.
+            Windows SmartScreen warns the first time because the files are not code-signed: choose "More info", then "Run anyway".
+          files: |
+            installer_out/SleepScope-Setup.exe
+            SleepScope-Windows-x64.zip
           make_latest: true
