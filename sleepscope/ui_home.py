@@ -11,6 +11,7 @@ STEPS = [
     ('4', '#eb6834', 'Connect Claude', 'Save an API key from console.anthropic.com and Claude writes a synopsis of your data by itself each time it loads, and answers questions (a few cents each).', 'Set up Ask Claude', 'ask'),
     ('5', '#e34948', 'Add an oximeter', 'A Wellue O2Ring or similar records SpO2 all night. Import its CSV and the oxygen side of the picture fills in.', 'Import oximeter CSV…', 'oximeter'),
     ('6', '#eda100', 'Add Apple Health', 'Export from the Health app on the iPhone and import here for sleep stages, heart rate and Watch SpO2 next to the CPAP data.', 'Import Apple Health…', 'apple'),
+    ('7', '#0f8f8a', 'Record your equipment', 'Enter your machine and mask (type, brand, model, size) and when parts were last replaced. SleepScope reads how you use them and lists options worth raising with your doctor or supplier.', 'Go to Equipment', 'equipment'),
 ]
 
 
@@ -49,7 +50,7 @@ class HomeView(QtWidgets.QScrollArea):
         hrow = QtWidgets.QHBoxLayout(); bl.addLayout(hrow)
         mark = QtWidgets.QLabel(); mark.setPixmap(logo_pixmap(48, on_dark=True)); hrow.addWidget(mark)
         h = QtWidgets.QLabel('SleepScope'); h.setStyleSheet('font-size:26px; font-weight:800'); hrow.addWidget(h); hrow.addStretch()
-        sub = QtWidgets.QLabel('See what your CPAP is doing every night: what the machine scored, what the airflow shows, where the mask leaked, and what it all means. Six steps, in order. Steps 1 and 2 are enough to start; the rest add more of the picture.')
+        sub = QtWidgets.QLabel('See what your CPAP is doing every night: what the machine scored, what the airflow shows, where the mask leaked, and what it all means. Seven steps, in order. Steps 1 and 2 are enough to start; the rest add more of the picture.')
         sub.setWordWrap(True); sub.setStyleSheet('font-size:13px'); bl.addWidget(sub)
         self.summary = QtWidgets.QLabel(''); self.summary.setStyleSheet('font-size:12px; color:#dbe7f7'); bl.addWidget(self.summary)
         lay.addWidget(banner)
@@ -60,7 +61,7 @@ class HomeView(QtWidgets.QScrollArea):
         foot = QtWidgets.QLabel('Full written instructions, including setting up the card reader and the Claude API key, are on the <b>How to use</b> tab. SleepScope is not a medical device; it reads the data so you can ask better questions.')
         foot.setWordWrap(True); foot.setStyleSheet('color:#52514e; font-size:12px; background:transparent'); lay.addWidget(foot); lay.addStretch()
 
-    def update_status(self, nights, api_key, oximetry, apple):
+    def update_status(self, nights, api_key, oximetry, apple, equipment=False):
         n = len(nights or [])
         self.cards['open'].set_done(n > 0, f'{n} nights loaded', 'No data loaded')
         self.cards['synopsis'].set_done(n > 0, 'Ready to read', 'Needs data')
@@ -68,6 +69,7 @@ class HomeView(QtWidgets.QScrollArea):
         self.cards['ask'].set_done(bool(api_key), 'API key saved', 'No API key yet')
         self.cards['oximeter'].set_done(oximetry, 'Oximetry present', 'Optional')
         self.cards['apple'].set_done(apple, 'Watch data present', 'Optional')
+        self.cards['equipment'].set_done(equipment, 'Recorded', 'Recommended')
         if n:
             hrs = sum(x.hours for x in nights); ahi = sum(x.stats.get('OA', 0) + x.stats.get('CA', 0) + x.stats.get('H', 0) + x.stats.get('UA', 0) for x in nights) / hrs if hrs else 0
             self.summary.setText(f'Loaded: {n} nights, {hrs:.1f} hours, machine AHI {ahi:.1f}. Last night {nights[-1].label}: {nights[-1].hours:.1f} h, AHI {nights[-1].stats.get("AHI", 0):.1f}.')
