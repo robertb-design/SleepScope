@@ -37,6 +37,36 @@ class LoadWorker(QtCore.QThread):
             import traceback; self.failed.emit(traceback.format_exc())
 
 
+class PhoneSyncWorker(QtCore.QThread):
+    """Writes the card (last 45 nights of DATALOG, STR.edf, Identification) as one zip into a synced folder such as
+    Dropbox\\SleepScope, so the phone app can open it without reading the SD card itself."""
+    done = QtCore.Signal(str)
+    def __init__(self, root, datalog, folder, nights):
+        super().__init__(); self.root, self.datalog, self.folder, self.nights = root, datalog, folder, nights
+    def run(self):
+        import zipfile, datetime as _dt
+        try:
+            os.makedirs(self.folder, exist_ok=True)
+            keep = {n.date for n in self.nights[-45:]}
+            tmp = os.path.join(self.folder, 'SleepScope card.zip.part'); out = os.path.join(self.folder, 'SleepScope card.zip')
+            count = 0
+            with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=5) as z:
+                for name in ('STR.edf', 'Identification.json', 'Identification.tgt', 'Identification.crc'):
+                    p_ = os.path.join(self.root, name)
+                    if os.path.exists(p_): z.write(p_, name)
+                for sub in sorted(os.listdir(self.datalog)):
+                    d_ = os.path.join(self.datalog, sub)
+                    if not (os.path.isdir(d_) and len(sub) == 8 and sub.isdigit()): continue
+                    day = _dt.date(int(sub[:4]), int(sub[4:6]), int(sub[6:]))
+                    if day not in keep and (day - _dt.timedelta(days=1)) not in keep: continue
+                    for fn in os.listdir(d_):
+                        if fn.lower().endswith('.edf'): z.write(os.path.join(d_, fn), f'DATALOG/{sub}/{fn}'); count += 1
+            os.replace(tmp, out)
+            self.done.emit(f'Phone copy updated: {out} ({os.path.getsize(out) / 1e6:.0f} MB, {count} files)')
+        except Exception as e:
+            self.done.emit(f'Phone copy failed: {e}')
+
+
 class Table(QtWidgets.QTableWidget):
     def __init__(self, headers):
         super().__init__(0, len(headers)); self.setHorizontalHeaderLabels(headers)
@@ -322,7 +352,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tb = self.addToolBar('Main'); tb.setMovable(False); tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         tb.addWidget(LogoWidget(30)); tb.addSeparator()
         tb.addAction('Open SD card…', self.open_card); tb.addAction('Reload', self.reload); tb.addAction('Load sample data', self.load_sample); tb.addAction('Close data', self.close_data)
-        tb.addAction('Import oximeter CSV…', self.import_oximeter); tb.addAction('Import Apple Health…', self.import_apple); tb.addAction('Companion folder…', self.set_companion_folder); tb.addSeparator()
+        tb.addAction('Import oximeter CSV…', self.import_oximeter); tb.addAction('Import Apple Health…', self.import_apple); tb.addAction('Companion folder…', self.set_companion_folder); tb.addAction('Phone copy…', self.set_phone_folder); tb.addSeparator()
         tb.addAction('Export statistics CSV', lambda: self.export_table(self.stats_table, 'sleepscope_nights.csv'))
         tb.addAction('Export events CSV', self.export_events); tb.addAction('Save chart as PNG', self.save_png)
         self.progress = QtWidgets.QProgressBar(); self.progress.setFixedWidth(220); self.progress.setVisible(False)
@@ -409,6 +439,7 @@ class MainWindow(QtWidgets.QMainWindow):
         scoring.apply_str_settings(self.nights, self.night_view.str_data)
         self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
         if self.nights: self._auto_companions(data.get('root'))
+        if self.nights: self._phone_sync()
         if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self._show_tab(self.synopsis)
         if not self.nights: QtWidgets.QMessageBox.information(self, 'No data', 'No sessions of 5 minutes or longer were found under that folder.')
 
@@ -493,7 +524,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ oximeter and export
     def companion_folders(self, root):
         home = os.path.expanduser('~')
-        cands = [root, os.path.dirname(root) if root else None, SETTINGS.value('ox_folder', ''),
+        cands = [root, os.path.dirname(root) if root else None, SETTINGS.value('ox_folder', ''), self.phone_folder(),
                  os.path.join(home, 'Dropbox'), os.path.join(home, 'Dropbox', 'SleepScope'), os.path.join(home, 'Dropbox', 'O2Ring'),
                  os.path.join(home, 'OneDrive'), os.path.join(home, 'Downloads'), os.path.join(home, 'Documents', 'SleepScope')]
         return [c for c in cands if c]
@@ -523,6 +554,31 @@ class MainWindow(QtWidgets.QMainWindow):
             if filled: parts.append(f'oximeter: {used} file{"s" if used != 1 else ""} found, SpO2 attached to {filled} session{"s" if filled != 1 else ""}')
             if hmatched: parts.append(f'Apple Health: matched {hmatched} night{"s" if hmatched != 1 else ""}')
             self.statusBar().showMessage(f'{len(self.nights)} nights loaded. ' + '; '.join(parts) + '.')
+    def phone_folder(self):
+        f = SETTINGS.value('phone_folder', '')
+        if f == 'off': return None
+        if f: return f
+        for cand in (os.path.join(os.path.expanduser('~'), 'Dropbox'), os.path.join(os.path.expanduser('~'), 'OneDrive')):
+            if os.path.isdir(cand): return os.path.join(cand, 'SleepScope')
+        return None
+    def _phone_sync(self):
+        folder = self.phone_folder()
+        if not folder or not self.data or not self.data.get('datalog') or not os.path.isdir(self.data['datalog']): return
+        if os.path.abspath(self.data['root']).startswith(os.path.abspath(folder)): return      # loading from the phone copy itself
+        if getattr(self, 'sync_worker', None) is not None and self.sync_worker.isRunning(): return
+        self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights)
+        self.sync_worker.done.connect(lambda msg: self.statusBar().showMessage(msg, 15000)); self.sync_worker.start()
+    def set_phone_folder(self):
+        cur = self.phone_folder() or os.path.expanduser('~')
+        box = QtWidgets.QMessageBox(self); box.setWindowTitle('Phone copy')
+        box.setText(f"Every time a card is opened, SleepScope saves it as one file, SleepScope card.zip, in a synced folder so the phone app can open it.\n\nNow: {self.phone_folder() or 'off'}")
+        b1 = box.addButton('Choose folder…', QtWidgets.QMessageBox.AcceptRole); b2 = box.addButton('Turn off', QtWidgets.QMessageBox.DestructiveRole); box.addButton('Close', QtWidgets.QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is b1:
+            d = QtWidgets.QFileDialog.getExistingDirectory(self, 'Synced folder for the phone copy, for example Dropbox\\SleepScope', cur)
+            if d: SETTINGS.setValue('phone_folder', d); self._phone_sync()
+        elif box.clickedButton() is b2:
+            SETTINGS.setValue('phone_folder', 'off'); self.statusBar().showMessage('Phone copy turned off.')
     def set_companion_folder(self):
         d = QtWidgets.QFileDialog.getExistingDirectory(self, 'Folder where the O2Ring CSV exports (and the Health Shortcut file) are saved, for example Dropbox\\SleepScope', SETTINGS.value('ox_folder', os.path.expanduser('~')))
         if not d: return

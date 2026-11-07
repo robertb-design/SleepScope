@@ -64,6 +64,7 @@ HELP = """
 <li>Wear the ring every night with the CPAP. Charge it during the day.</li>
 <li>In the ring's phone app (ViHealth for Wellue), open the night, choose export or share, and pick <b>CSV</b>. Send the file to the PC (email it to yourself, AirDrop, or the app's PC software).</li>
 <li>Save the CSV into a folder SleepScope watches: the SD card itself, your Dropbox or OneDrive folder, Downloads, or any folder you choose with <b>Companion folder…</b> on the toolbar. Every time a card is loaded, SleepScope finds the ring files there on its own and attaches them by time; the status bar at the bottom reports how many. <b>Import oximeter CSV…</b> is still there for a file somewhere else.</li>
+<li><b>Phone copy.</b> Each time a card is opened, SleepScope saves <b>SleepScope card.zip</b> (the last 45 nights) in Dropbox\\SleepScope, or the folder chosen under <b>Phone copy…</b> on the toolbar. The iPhone app opens that file from Dropbox, so the phone never needs to read the SD card. Save the ring CSV from ViHealth into the same folder and both the PC and the phone find it.</li>
 <li>Look at the Synopsis oxygen section, the SpO2 and pulse panels in the Night tab, and the SpO2 columns in Statistics.</li>
 </ol>
 

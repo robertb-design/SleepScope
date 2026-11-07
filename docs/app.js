@@ -63,7 +63,16 @@ function afterLoad() {
   renderSynopsis(); fillNightTable(); if ($('p-nights').classList.contains('active')) drawOverview();
   if (autoOpenSynopsis) { autoOpenSynopsis = false; go('syn'); }
 }
-$('filein').onchange = async (e) => { const list = [...e.target.files]; if (!list.length) return; try { const files = normalise(await filesFromInputs(list)); await loadFiles(files, list.length === 1 ? list[0].name : list.length + ' files'); try { await idb.put('last', { files, label: list.length === 1 ? list[0].name : list.length + ' files', when: Date.now() }); } catch (err) {} } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
+// One button takes everything: the card zip, ring CSVs, the Health file, in any combination. A pick with no card files
+// (say just last night's ring CSV) is added to the card already loaded instead of replacing it, and all of it is remembered.
+async function addFiles(list, label) {
+  let files = normalise(await filesFromInputs(list)); const hasCard = Object.keys(files).some(k => /\.edf$/i.test(k));
+  if (!hasCard) { let last = null; try { last = await idb.get('last'); } catch (err) {}
+    if (!last || !last.files) { $('loadmsg').textContent = 'Load the card zip first; ring and Health files are added to it.'; return; }
+    files = Object.assign({}, last.files, files); label = last.label + ' + ' + label; }
+  await loadFiles(files, label); try { await idb.put('last', { files, label, when: Date.now() }); } catch (err) {}
+}
+$('filein').onchange = async (e) => { const list = [...e.target.files]; if (!list.length) return; try { await addFiles(list, list.length === 1 ? list[0].name : list.length + ' files'); } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
 $('samplebtn').onclick = async () => { $('loadmsg').textContent = 'Fetching sample card…'; try { const r = await fetch('sample.zip'); const z = await JSZip.loadAsync(await r.arrayBuffer()); const files = {}; for (const [name, entry] of Object.entries(z.files)) if (!entry.dir && /\.edf$/i.test(name)) files[name] = await entry.async('arraybuffer'); await loadFiles(normalise(files), 'sample card'); } catch (e) { $('loadmsg').textContent = 'Sample not available offline yet: ' + e; } };
 let appleData = null;
 $('applein').onchange = async (e) => {
@@ -78,7 +87,7 @@ $('applein').onchange = async (e) => {
   } catch (err) { $('applemsg').textContent = 'Could not read that: ' + err.message; }
   e.target.value = '';
 };
-$('oxin').onchange = async (e) => { const f = e.target.files[0]; if (!f || !nights.length) return; const n = SS.importOximeterCsv(await f.text(), nights); for (const nt of nights) nt.stats = SS.nightStats(nt); afterLoad(); alert(`SpO2 attached to ${n} session(s) by timestamp.`); e.target.value = ''; };
+$('oxin').onchange = async (e) => { const list = [...e.target.files]; if (!list.length || !nights.length) return; try { await addFiles(list, list.map(f => f.name).join(', ')); } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
 
 // ---------------------------------------------------------------- synopsis
 function quick(days) { if (!nights.length) return; const last = nights[nights.length - 1].date; $('d1').value = last; $('d0').value = days ? (nights.find(n => n.date >= addDays(last, -(days - 1))) || nights[0]).date : nights[0].date; renderSynopsis(); }
