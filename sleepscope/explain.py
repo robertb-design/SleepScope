@@ -117,6 +117,12 @@ def overview(nights) -> str:
 
 
 def night(nt) -> str:
+    if getattr(nt, 'summary_only', False):
+        st = nt.stats
+        return ('<p><b>Card was out this night.</b> Only the machine\'s own daily summary exists: '
+                + f"{nt.hours:.1f} h, AHI {st.get('AHI', float('nan')):.2f}, leak 95th {st.get('leak_95', float('nan')):.0f} L/min, pressure 95th {st.get('press_95', float('nan')):.1f} cmH2O. "
+                + 'No flow, pressure or event detail was recorded, so the panels are empty except for ring data if the ring was worn.</p>')
+
     s = nt.stats; ss = nt.sessions; out = []
     mev = [e for x in ss for e in x.machine_events]; aev = [e for x in ss for e in x.app_events]
     # pressure
@@ -198,6 +204,14 @@ def point(kind, **c) -> str:
         st = c.get('stage', '')
         words = {'Deep': 'Deep sleep, the physically restorative kind. Adults get most of it in the first half of the night.', 'Core': 'Core (light) sleep, the bulk of a normal night.', 'REM': 'REM, dreaming sleep, when muscles relax most and the airway is at its floppiest; events often cluster here.', 'Awake': 'Awake, as judged by the Watch from movement and heart rate.', 'InBed': 'In bed but not asleep.', 'Asleep': 'Asleep (the Watch did not separate stages).'}.get(st, st)
         return f"<b>Apple Watch: {st}</b>, {n} at {t}<br>{words}<br>Ribbon over grey floor is sleep with the mask off: untreated sleep.<br><b>What to do:</b> the ribbon should be covered by the strip. Where it is not, that is the gain available by keeping the mask on."
+    if kind == 'summary':
+        def f(x, fmtx='{:.1f}'):
+            try: return fmtx.format(x) if x is not None and x == x else '?'
+            except Exception: return '?'
+        when = 'The mask on and off times come from the machine.' if c.get('exact') else 'The machine did not record mask times, so the strip is placed at 22:00 for the right length.'
+        return (f"<b>Card was out</b>, {n}<br>The SD card was not in the machine this night, so no breath by breath detail exists. What you see is the machine's own summary, kept in its memory and written to the card later: "
+                f"{f(c.get('hours'), '{:.1f}')} h, AHI {f(c.get('AHI'), '{:.2f}')} (obstructive {c.get('OA', '?')}, central {c.get('CA', '?')}, hypopnea {c.get('H', '?')}), leak 95th {f(c.get('leak_95'), '{:.0f}')} L/min, pressure 95th {f(c.get('press_95'))} cmH2O"
+                + (f", setting {c.get('setting')}" if c.get('setting') else '') + f". {when}<br><b>What to do:</b> keep the card in the machine overnight. Copy it in the morning and put it straight back; nothing needs deleting.")
     if kind == 'motion':
         v = c.get('motion', 0); pl = c.get('pulse'); sp = c.get('spo2')
         extra = []

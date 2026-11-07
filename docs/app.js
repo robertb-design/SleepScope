@@ -42,6 +42,7 @@ async function loadFiles(files, label) {
   const prog = $('progress'); prog.style.display = 'block'; const bar = prog.firstElementChild; $('loadmsg').textContent = 'Reading ' + label + '…';
   const t0 = Date.now();
   nights = await SS.buildSessions(files, (i, n, name) => { bar.style.width = (100 * i / Math.max(n, 1)) + '%'; $('loadmsg').textContent = `Reading ${name} (${i + 1}/${n})`; });
+  if (nights.length) { const extra = SS.summaryNights(strData, nights); if (extra.length) nights = nights.concat(extra).sort((a, b) => (a.date < b.date ? -1 : 1)); }
   const comp = nights.length ? applyCompanions(files) : { oxFiles: 0, oxSessions: 0, health: false };
   for (let i = 0; i < nights.length; i++) { const n = nights[i]; $('loadmsg').textContent = `Scoring ${SS.label(n.date)}`; bar.style.width = (100 * i / nights.length) + '%'; await new Promise(r => setTimeout(r, 0)); for (const s of n.sessions) SS.scoreSession(s); n.stats = SS.nightStats(n); }
   prog.style.display = 'none';
@@ -125,6 +126,7 @@ function showNight(i) {
     <div class="card"><details><summary>What these panels mean, what stands out tonight, what to improve</summary><div id="ntexplain"></div></details></div>
     <div class="card"><b>Events</b> <span class="muted">(tap one to see the airflow around it)</span><div id="evlist"></div></div><div class="card" id="zoomcard" style="display:none"><div id="ch-zoom" style="width:100%;height:240px"></div><div class="muted" id="zoomnote"></div></div>`;
   box.scrollIntoView({ behavior: 'smooth' }); $('ntexplain').innerHTML = EX.night(n);
+  if (n.summary_only) box.insertAdjacentHTML('afterbegin', `<div class="card" style="border-left:6px solid #8f9bb3"><b>Card was out this night.</b> Only the machine's own summary exists: ${n.hours.toFixed(1)} h, AHI ${Number.isFinite(s.AHI) ? s.AHI.toFixed(2) : '?'} (obstructive ${s.OA}, central ${s.CA}, hypopnea ${s.H}), leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'} L/min, pressure 95th ${Number.isFinite(s.press_95) ? s.press_95.toFixed(1) : '?'}. No breath detail was recorded, so the panels below are empty except for ring data.</div>`);
   const t0 = n.sessions[0].start; const tr = []; const shapes = [];
   const series = (k, sc, name, color, yaxis) => { const xs = [], ys = []; for (const ses of n.sessions) { const a = ses.ch[k]; if (!a) continue; for (let i = 0; i < a.length; i++) { xs.push(new Date(ses.start.getTime() + 2000 * i)); ys.push(a[i] * sc); } xs.push(null); ys.push(null); } if (xs.length) tr.push({ x: xs, y: ys, mode: 'lines', line: { color, width: 1 }, name, yaxis, hoverinfo: 'x+y+name' }); };
   series('Press', 1, 'Set pressure', C.blue, 'y'); series('MaskPress', 1, 'Mask pressure', C.aqua, 'y'); series('Leak', 60, 'Leak L/min', C.orange, 'y2'); series('FlowLim', 1, 'Flow limitation', C.violet, 'y3'); series('Snore', 1, 'Snore', '#e87ba4', 'y3'); series('TidVol', 1000, 'Tidal volume mL', C.green, 'y4');
@@ -199,6 +201,8 @@ function drawLandscape() {
     const z = op.map(v => Number.isNaN(v) ? -0.15 * LB.Z : Math.min(1, Math.max(0, v)) * LB.Z); const col = op.map(v => Number.isNaN(v) ? -0.2 : Math.min(1, Math.max(0, v)));
     const zz = z.map((v, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(W - 1, i + 2); j++) { a += z[j]; c++; } return a / c; });
     traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'none', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date), meta: { kind: 'terrain', k } });
+    if (n.summary_only) { const zs = xs.map((_, i) => { const t = base + i * LB.bin * 1000; return n.sessions.some(se => t >= se.start.getTime() - LB.bin * 1000 && t <= se.start.getTime() + se.duration * 1000) ? 0.45 * LB.Z : null; });
+      traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zs, zs, zs], surfacecolor: [zs.map(() => 0), zs.map(() => 0), zs.map(() => 0)], colorscale: [[0, '#8f9bb3'], [1, '#8f9bb3']], showscale: false, hoverinfo: 'none', opacity: 1, name: 'card out', meta: { kind: 'summary', k } }); }
     const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'none', meta: { kind: 'water', k } });
     const px = [], pz = []; pr.forEach((v, i) => { if (!Number.isNaN(v)) { px.push(xs[i]); pz.push(LB.Z * (1.15 + (v - 4) / 12)); } else { px.push(null); pz.push(null); } });
     traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#c026d3', width: 5 }, hoverinfo: 'none', name: 'pressure', meta: { kind: 'pressure', k } });
@@ -242,7 +246,8 @@ function landClick(ev) {
     const g = landGrids[meta.k]; if (!g) return; const i = Math.min(LB.n - 1, Math.max(0, Math.round(p.x / 0.25)));
     const time = hm(new Date(g.base + i * LB.bin * 1000)), night = SS.label(g.n.date);
     const op = g.op[i], lk = Number.isNaN(g.lk[i]) ? 0 : g.lk[i], pr = Number.isNaN(g.pr[i]) ? null : g.pr[i];
-    if (meta.kind === 'terrain') html = Number.isNaN(op) ? EX.point('floor', { night, time }) : EX.point('terrain', { night, time, openness: Math.min(1, Math.max(0, op)), leak: lk, press: pr });
+    if (meta.kind === 'summary') { const st = g.n.stats; html = EX.point('summary', { night, hours: g.n.hours, AHI: st.AHI, OA: st.OA, CA: st.CA, H: st.H, leak_95: st.leak_95, press_95: st.press_95, setting: SS.pressureLabel(st), exact: g.n.str_summary && g.n.str_summary.exact }); }
+    else if (meta.kind === 'terrain') html = Number.isNaN(op) ? EX.point('floor', { night, time }) : EX.point('terrain', { night, time, openness: Math.min(1, Math.max(0, op)), leak: lk, press: pr });
     else if (meta.kind === 'water') html = EX.point('water', { night, time, leak: lk });
     else if (meta.kind === 'pressure') html = EX.point('pressure', { night, time, press: pr ?? 0 });
     else if (meta.kind === 'motion') html = EX.point('motion', { night, time, motion: g.mo[i], pulse: Number.isNaN(g.hr[i]) ? null : g.hr[i], spo2: Number.isNaN(g.sp[i]) ? null : g.sp[i] });

@@ -88,6 +88,8 @@ class Night:
     sessions: list
     stats: dict = field(default_factory=dict)
     apple: dict | None = None
+    summary_only: bool = False          # card was out: only the machine's daily summary (STR.edf) exists
+    str_summary: dict | None = None
     @property
     def hours(self): return sum(s.duration for s in self.sessions) / 3600.0
     @property
@@ -215,8 +217,10 @@ def scan(root, min_session_s=300, progress=None):
     for s in sessions:
         nights.setdefault(night_date(s.start), []).append(s)
     out = [Night(d, sorted(ss, key=lambda s: s.start)) for d, ss in sorted(nights.items())]
+    st = read_str(card_root)
+    out = sorted(out + summary_nights(st, out), key=lambda n: n.date)
     return {'root': card_root, 'datalog': datalog, 'identification': read_identification(card_root),
-            'str': read_str(card_root), 'nights': out}
+            'str': st, 'nights': out}
 
 
 # ----------------------------------------------------------------------------- external oximeter CSV (Wellue O2Ring, Checkme, generic)
@@ -306,3 +310,59 @@ def find_companion_files(folders, max_depth=2):
                 if ('oxygen' in head or 'spo2' in head) and ('time' in head or 'date' in head): ox.append(path)
                 elif low.endswith('.txt') and (head.startswith('sleep,') or head.startswith('heart rate,') or head.startswith('blood oxygen,')): health.append(path)
     return sorted(set(ox)), sorted(set(health))
+
+
+# ----------------------------------------------------------------------------- nights the card missed: machine summary from STR.edf
+def str_day(str_data, label, i):
+    """All samples of one STR signal for day index i (some signals, such as MaskOn and MaskOff, carry several per day)."""
+    sig = str_data['signals'].get(label); n = len(str_data['days'])
+    if sig is None or n == 0: return np.array([])
+    spr = max(1, len(sig) // n)
+    return np.asarray(sig[i * spr:(i + 1) * spr], dtype=float)
+
+
+def _str_label(sig, *names):
+    low = {k.lower(): k for k in sig}
+    for nm in names:
+        if nm.lower() in low: return low[nm.lower()]
+    return None
+
+
+def summary_nights(str_data, nights):
+    """Nights inside the loaded range that have a machine summary in STR.edf but no DATALOG files (card was out).
+    Sessions come from the MaskOn/MaskOff minutes (counted from the STR day start, noon); if those are missing or
+    disagree with the day's duration, one session of the right length is placed at 22:00."""
+    if not (str_data and 'signals' in str_data and nights): return []
+    sig = str_data['signals']; days = str_data['days']; have = {n.date for n in nights}
+    lo, hi = min(have), max(have)
+    t0 = str_data.get('start').time() if str_data.get('start') else dt.time(12)
+    L = lambda *a: _str_label(sig, *a)
+    ldur, lon, loff = L('Duration', 'OnDuration'), L('MaskOn'), L('MaskOff')
+    def v1(lab, i):
+        if not lab: return np.nan
+        x = str_day(str_data, lab, i); x = x[np.isfinite(x)]
+        return float(x[0]) if len(x) else np.nan
+    out = []
+    for i, d in enumerate(days):
+        if d in have or d < lo or d > hi: continue
+        dur = v1(ldur, i)
+        if not np.isfinite(dur) or dur < 5: continue          # minutes
+        day0 = dt.datetime.combine(d, t0); sess = []
+        if lon and loff:
+            for a, b in zip(str_day(str_data, lon, i), str_day(str_data, loff, i)):
+                if np.isfinite(a) and np.isfinite(b) and a >= 0 and b > a and b <= 1440:
+                    sess.append(Session(start=day0 + dt.timedelta(minutes=float(a)), duration=float(b - a) * 60, folder='', stem='STR'))
+        if not sess or abs(sum(s.duration for s in sess) / 60 - dur) > max(20, 0.25 * dur):
+            sess = [Session(start=dt.datetime.combine(d, dt.time(22)), duration=dur * 60, folder='', stem='STR')]
+        def g(*names):
+            return v1(L(*names), i)
+        lk = [g('Leak.50'), g('Leak.95'), g('Leak.Max')]
+        if all(not np.isfinite(x) or x < 3 for x in lk): lk = [x * 60 if np.isfinite(x) else x for x in lk]   # L/s to L/min
+        tv = g('TidVol.50'); tv = tv * 1000 if np.isfinite(tv) and tv < 5 else tv
+        nt = Night(d, sess, summary_only=True)
+        nt.str_summary = dict(hours=dur / 60, AHI=g('AHI'), AI=g('AI'), HI=g('HI'), OAI=g('OAI'), CAI=g('CAI'), UAI=g('UAI'),
+                              leak_med=lk[0], leak_95=lk[1], leak_max=lk[2], press_med=g('MaskPress.50'), press_95=g('MaskPress.95'),
+                              press_max=g('MaskPress.Max'), rr_med=g('RespRate.50'), tv_med=tv, mv_med=g('MinVent.50'),
+                              exact_times=sess[0].start != dt.datetime.combine(d, dt.time(22)))
+        out.append(nt)
+    return out

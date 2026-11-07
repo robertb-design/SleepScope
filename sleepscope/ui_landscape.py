@@ -147,6 +147,21 @@ class LandscapeView(QtWidgets.QWidget):
             z = np.where(np.isnan(op), -0.15, np.clip(op, 0, 1)) * Z_SCALE
             col = terrain_colour(np.where(np.isnan(op), 0.0, np.clip(op, 0, 1)))
             col[np.isnan(op)] = _hex('#c9c8c3')                 # floor grey for mask off
+            if getattr(nt, 'summary_only', False):
+                # card was out: a flat slate plateau over the mask-on hours from the machine's own summary
+                mon = np.zeros(W, dtype=bool)
+                for s_ in nt.sessions:
+                    a_ = int((s_.start - base_dt).total_seconds() // BIN_S); b_ = int((s_.end - base_dt).total_seconds() // BIN_S) + 1
+                    mon[max(a_, 0):min(b_, W)] = True
+                z[mon] = 0.45 * Z_SCALE; col[mon] = _hex('#8f9bb3')
+                sm = nt.stats
+                ctx = dict(night=nt.label, hours=nt.hours, AHI=sm.get('AHI'), OA=sm.get('OA'), CA=sm.get('CA'), H=sm.get('H'), leak_95=sm.get('leak_95'), press_95=sm.get('press_95'), setting=sm.get('setting', ''), exact=bool((nt.str_summary or {}).get('exact_times')))
+                self.pick_pts = [p_ for p_ in self.pick_pts if not (p_[4].get('night') == nt.label and p_[3] == 'floor' and mon[min(W - 1, max(0, int(round((p_[0] - xs[0]) / (xs[1] - xs[0])))))])]
+                for i in np.where(mon)[0][::2]:
+                    self.pick_pts.append((xs[i], y0, 0.45 * Z_SCALE, 'summary', dict(ctx, time=(base_dt + dt.timedelta(seconds=int(i) * BIN_S)).strftime('%H:%M'))))
+                if mon.any():
+                    lab_ = gl.GLTextItem(pos=(float(xs[np.where(mon)[0][0]]), y0, 0.75 * Z_SCALE), text='card out', color=(80, 90, 110, 255))
+                    self.gl.addItem(lab_); self.items.append(lab_)
             # smooth the height a touch so it reads as terrain, not bars
             zz = np.convolve(z, np.ones(5) / 5, 'same'); zz[:2] = z[:2]; zz[-2:] = z[-2:]
             Z = np.vstack([zz, zz, zz]).T                         # (W, 3)
@@ -297,7 +312,7 @@ class LandscapeView(QtWidgets.QWidget):
             if v.w() <= 0: continue
             sx = (v.x() / v.w() * 0.5 + 0.5) * w; sy = (1 - (v.y() / v.w() * 0.5 + 0.5)) * h
             d = (sx - pos.x()) ** 2 + (sy - pos.y()) ** 2
-            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0, 'spo2': 0.7, 'pulse': 0.8, 'motion': 0.6}[kind]   # favour pillars when close
+            kind = self.pick_pts[i][3]; d *= {'event': 0.5, 'water': 0.8, 'pressure': 1.2, 'stage': 1.0, 'terrain': 1.0, 'floor': 1.0, 'spo2': 0.7, 'pulse': 0.8, 'motion': 0.6, 'summary': 1.0}[kind]   # favour pillars when close
             if d < bestd: bestd = d; best = i
         if best is None or bestd > 30 ** 2: self.popup.setVisible(False); return
         x, y, z, kind, ctx = self.pick_pts[best]
@@ -383,6 +398,7 @@ class LandscapeKey(QtWidgets.QWidget):
             (('line', C['aqua']), 'Back line: ring SpO2 (amber dip, red under 90)'),
             (('line', '#0e9aa7'), 'Teal line, furthest back: ring pulse'),
             (('dot', '#52514e'), 'Grey beads on it: ring motion (hand moving)'),
+            (('swatch', '#8f9bb3'), 'Flat slate: card was out, machine summary only'),
             (('line', C['red']), 'Red line: Watch heart rate'),
             (('dot', None), 'Dots: Watch SpO2 (red = under 90%)'),
         ]

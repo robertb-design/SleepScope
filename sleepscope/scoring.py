@@ -379,7 +379,17 @@ def night_stats(nt: Night) -> dict:
         spo2_pct_lt90=float((spv < 90).mean() * 100) if len(spv) else np.nan, spo2_pct_lt88=float((spv < 88).mean() * 100) if len(spv) else np.nan, ODI=odi / (len(spv) / 3600) if len(spv) > 600 else np.nan, spo2_minutes_lt88=float((spv < 88).sum() / 60) if len(spv) else np.nan,
         pulse_mean=float(puv.mean()) if len(puv) else np.nan, pulse_min=float(puv.min()) if len(puv) else np.nan, pulse_max=float(puv.max()) if len(puv) else np.nan,
     )
-    d['setting'] = getattr(nt, 'str_setting', None) or pressure_label(d)
+    if getattr(nt, 'summary_only', False) and nt.str_summary:
+        sm = nt.str_summary; h = sm['hours'] or nt.hours
+        def r(x): return int(round(x * h)) if np.isfinite(x) else 0
+        d.update(mode='Summary only', AHI=sm['AHI'] if np.isfinite(sm['AHI']) else np.nan, OA=r(sm['OAI']), CA=r(sm['CAI']), H=r(sm['HI']), UA=r(sm['UAI']),
+                 CAI=sm['CAI'], arousals=np.nan, app_AHI=np.nan, app_RDI=np.nan, app_apneas=np.nan, app_hypopneas=np.nan, app_unflagged=np.nan,
+                 app_flowlim_runs=np.nan, app_RERA_like=np.nan, app_leak_excluded=np.nan, app_hyp_conf_txt='',
+                 leak_med=sm['leak_med'], leak_95=sm['leak_95'], leak_max=sm['leak_max'],
+                 leak_pct_large=np.nan, press_med=sm['press_med'], press_95=sm['press_95'], press_max=sm['press_max'], press_min=np.nan, press_floor=np.nan,
+                 press_at_max_pct=np.nan, rr_med=sm['rr_med'], tv_med=sm['tv_med'], mv_med=sm['mv_med'], flowlim_95=np.nan, flowlim_minutes=np.nan,
+                 periodic_windows=np.nan, summary_only=True)
+    d['setting'] = getattr(nt, 'str_setting', None) or ('' if getattr(nt, 'summary_only', False) else pressure_label(d))
     nt.stats = d
     return d
 
@@ -552,7 +562,7 @@ def apply_str_settings(nights, str_data):
         nt.str_setting = None
         if nt.date not in days: continue
         i = days.index(nt.date)
-        def v(l): return float(sig[l][i]) if l and i < len(sig[l]) and np.isfinite(sig[l][i]) and sig[l][i] > 0 else None
+        def v(l): return round(float(sig[l][i]), 1) if l and i < len(sig[l]) and np.isfinite(sig[l][i]) and sig[l][i] > 0 else None
         lo, hi, c = v(lmin), v(lmax), v(lc)
         if lo and hi and hi > lo and nt.stats.get('mode') != 'CPAP': nt.str_setting = f'AutoSet {lo:g} to {hi:g}'
         elif c and nt.stats.get('mode') == 'CPAP': nt.str_setting = f'CPAP {c:g}'

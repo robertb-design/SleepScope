@@ -143,6 +143,27 @@ const SS = (() => {
     const lo = v(find(/AS\.MinPress/, /MinPress/)), hi = v(find(/AS\.MaxPress/, /MaxPress/)), c = v(find(/S\.C\.Press/, /C\.Press/));
     if (lo && hi && hi > lo && mode !== 'CPAP') return `AutoSet ${+lo.toFixed(1)} to ${+hi.toFixed(1)}`; if (c && mode === 'CPAP') return `CPAP ${+c.toFixed(1)}`; return null;
   }
+
+  // ---- nights the card missed: the machine's own summary from STR.edf
+  function summaryNights(str, nights) {
+    if (!str || !str.signals || !nights.length) return [];
+    const have = new Set(nights.map(n => n.date)); const dates = nights.map(n => n.date).sort(); const lo = dates[0], hi = dates[dates.length - 1];
+    const labs = Object.keys(str.signals); const L = (...names) => labs.find(l => names.some(n => l.toLowerCase() === n.toLowerCase()));
+    const v1 = (lab, i) => { if (!lab) return NaN; const x = str.signals[lab][i]; return Number.isFinite(x) ? x : NaN; };
+    const day = (lab, i) => { if (!lab) return []; const a = str.all && str.all[lab]; if (!a) return [v1(lab, i)]; return Array.from(a.data.slice(i * a.per, (i + 1) * a.per)); };
+    const ldur = L('Duration', 'OnDuration'), lon = L('MaskOn'), loff = L('MaskOff'); const out = [];
+    str.days.forEach((d, i) => {
+      if (have.has(d) || d < lo || d > hi) return; const dur = v1(ldur, i); if (!Number.isFinite(dur) || dur < 5) return;
+      const [y, m, dd] = d.split('-').map(Number); const day0 = new Date(y, m - 1, dd, str.startHour ?? 12, 0, 0); let sess = [];
+      if (lon && loff) { const a = day(lon, i), b = day(loff, i); for (let k = 0; k < Math.min(a.length, b.length); k++) if (a[k] >= 0 && b[k] > a[k] && b[k] <= 1440) sess.push({ start: new Date(day0.getTime() + a[k] * 60000), duration: (b[k] - a[k]) * 60, ch: {}, machine: [], app: [], summary: true }); }
+      let exact = sess.length > 0;
+      if (!sess.length || Math.abs(sess.reduce((t, x) => t + x.duration, 0) / 60 - dur) > Math.max(20, 0.25 * dur)) { sess = [{ start: new Date(y, m - 1, dd, 22, 0, 0), duration: dur * 60, ch: {}, machine: [], app: [], summary: true }]; exact = false; }
+      const g = (...n) => v1(L(...n), i); let lk = [g('Leak.50'), g('Leak.95'), g('Leak.Max')]; if (lk.every(x => !Number.isFinite(x) || x < 3)) lk = lk.map(x => Number.isFinite(x) ? x * 60 : x);
+      let tv = g('TidVol.50'); if (Number.isFinite(tv) && tv < 5) tv *= 1000;
+      out.push({ date: d, sessions: sess, hours: dur / 60, summary_only: true, str_summary: { hours: dur / 60, AHI: g('AHI'), OAI: g('OAI'), CAI: g('CAI'), HI: g('HI'), UAI: g('UAI'), leak_med: lk[0], leak_95: lk[1], leak_max: lk[2], press_med: g('MaskPress.50'), press_95: g('MaskPress.95'), press_max: g('MaskPress.Max'), rr_med: g('RespRate.50'), tv_med: tv, mv_med: g('MinVent.50'), exact } });
+    });
+    return out;
+  }
   function nightStats(nt) {
     const ss = nt.sessions, hrs = nt.hours; const pr = cat(ss, 'Press'), leak = cat(ss, 'Leak', 60), fl = cat(ss, 'FlowLim'), sn = cat(ss, 'Snore'), rr = cat(ss, 'RespRate'), tv = cat(ss, 'TidVol', 1000), mv = cat(ss, 'MinVent'), epr = cat(ss, 'EprPress');
     for (const s of ss) annotateEvents(s);
@@ -158,7 +179,7 @@ const SS = (() => {
     const dips = ss.flatMap(s => desatEvents(s)); const odi = dips.filter(d => !d.motion).length, odiMotion = dips.length - odi;
     const leaks = aevAll.filter(e => e.label === 'Large Leak');
     const g = (a) => a.length ? a : null;
-    return {
+    const st = {
       date: nt.date, hours: hrs, sessions: ss.length, mode, starts: ss.map(s => fmtTime(s.start)).join(', '), ends: ss.map(s => fmtTime(new Date(s.start.getTime() + s.duration * 1000))).join(', '),
       OA, CA, H, UA, arousals: AR, AHI: hrs ? (OA + CA + H + UA) / hrs : 0, CAI: hrs ? CA / hrs : 0,
       app_apneas: appAp, app_unflagged: cnt(aev, 'Apnea (unflagged by machine)'), app_hypopneas: appH, app_AHI: hrs ? (appAp + appH) / hrs : 0, app_flowlim_runs: appFL,
@@ -170,8 +191,13 @@ const SS = (() => {
       spo2_mean: spv.length ? mean(spv) : NaN, spo2_min: spv.length ? Math.min(...spv) : NaN, spo2_pct_lt90: spv.length ? 100 * spv.filter(v => v < 90).length / spv.length : NaN, spo2_minutes_lt88: spv.length ? spv.filter(v => v < 88).length / 60 : NaN,
       ODI: spv.length > 600 ? odi / (spv.length / 3600) : NaN, pulse_mean: puv.length ? mean(puv) : NaN, pulse_min: puv.length ? Math.min(...puv) : NaN,
     };
+    if (nt.summary_only && nt.str_summary) { const sm = nt.str_summary, h = sm.hours || hrs; const rr = (x) => Number.isFinite(x) ? Math.round(x * h) : 0;
+      Object.assign(st, { mode: 'Summary only', AHI: sm.AHI, OA: rr(sm.OAI), CA: rr(sm.CAI), H: rr(sm.HI), UA: rr(sm.UAI), CAI: sm.CAI, arousals: NaN, app_AHI: NaN, app_apneas: NaN, app_hypopneas: NaN, app_unflagged: NaN, app_flowlim_runs: NaN, app_leak_excluded: NaN, app_hyp_conf_txt: '',
+        leak_med: sm.leak_med, leak_95: sm.leak_95, leak_max: sm.leak_max, leak_pct_large: NaN, press_med: sm.press_med, press_95: sm.press_95, press_max: sm.press_max, press_min: NaN, press_floor: NaN, press_at_max_pct: NaN,
+        rr_med: sm.rr_med, tv_med: sm.tv_med, mv_med: sm.mv_med, flowlim_95: NaN, flowlim_minutes: NaN, summary_only: true, str_setting: strSetting(nt, 'AutoSet') }); }
+    return st;
   }
-  function pressureLabel(st) { if (st.str_setting) return st.str_setting; const lo = Number.isFinite(st.press_floor) ? st.press_floor : st.press_min, hi = st.press_max; if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ''; return st.mode === 'CPAP' ? `CPAP ${hi.toFixed(0)} (trace)` : `AutoSet ${lo.toFixed(0)} to ${hi.toFixed(0)} (trace)`; }
+  function pressureLabel(st) { if (st.str_setting) return st.str_setting; if (st.summary_only) return ''; const lo = Number.isFinite(st.press_floor) ? st.press_floor : st.press_min, hi = st.press_max; if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ''; return st.mode === 'CPAP' ? `CPAP ${hi.toFixed(0)} (trace)` : `AutoSet ${lo.toFixed(0)} to ${hi.toFixed(0)} (trace)`; }
   function fmtTime(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
   function label(dateStr) { const [y, m, d] = dateStr.split('-').map(Number); const dt = new Date(y, m - 1, d); return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' }); }
 
@@ -252,9 +278,10 @@ const SS = (() => {
     }
     return filled;
   }
-  function readStr(buf) {
+  let allSamples = null;
+  function readStr(buf) { allSamples = null;
     try { const e = readEdf(buf, true); const days = []; for (let i = 0; i < e.nrec; i++) { const d = new Date(e.start.getTime() + i * 86400e3); days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); }
-      const signals = {}; for (const k in e.sigs) { const sg = e.sigs[k]; const per = Math.max(1, Math.round(sg.data.length / e.nrec)); const v = []; for (let i = 0; i < e.nrec; i++) v.push(sg.data[i * per]); signals[k] = v; } return { days, signals }; } catch (err) { return null; }
+      const signals = {}; for (const k in e.sigs) { const sg = e.sigs[k]; const per = Math.max(1, Math.round(sg.data.length / e.nrec)); const v = []; for (let i = 0; i < e.nrec; i++) v.push(sg.data[i * per]); if (per > 1) { (allSamples ||= {})[k] = { per, data: sg.data }; } signals[k] = v; } return { days, signals, all: allSamples, startHour: e.start.getHours() }; } catch (err) { return null; }
   }
   function settingsSummary(nights, str) {
     const fin = Number.isFinite; const out = {};
@@ -312,6 +339,6 @@ const SS = (() => {
     }
     return out;
   }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

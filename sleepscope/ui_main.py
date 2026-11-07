@@ -416,7 +416,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = []
         for n in self.nights:
             s = n.stats
-            rows.append([n.label, f"{s['hours']:.2f}", s.get('setting') or scoring.pressure_label(s), f"{s['AHI']:.2f}", f"{s['app_AHI']:.2f}", scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
+            rows.append([n.label, f"{s['hours']:.2f}", s.get('setting') or scoring.pressure_label(s), scoring.fmt('AHI', s['AHI']), scoring.fmt('app_AHI', s['app_AHI']) or ('card out' if s.get('summary_only') else ''), scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
         self.night_table.fill(rows)
     def _fill_stats(self):
         self.stats_table.fill([[scoring.fmt(k, n.stats.get(k)) for k, _, _ in scoring.STAT_COLUMNS] for n in self.nights])
