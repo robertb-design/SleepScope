@@ -41,8 +41,8 @@ class PhoneSyncWorker(QtCore.QThread):
     """Writes the card (last 45 nights of DATALOG, STR.edf, Identification) as one zip into a synced folder such as
     Dropbox\\SleepScope, so the phone app can open it without reading the SD card itself."""
     done = QtCore.Signal(str)
-    def __init__(self, root, datalog, folder, nights):
-        super().__init__(); self.root, self.datalog, self.folder, self.nights = root, datalog, folder, nights
+    def __init__(self, root, datalog, folder, nights, ring_files=()):
+        super().__init__(); self.root, self.datalog, self.folder, self.nights, self.ring_files = root, datalog, folder, nights, list(ring_files)
     def run(self):
         import zipfile, datetime as _dt
         try:
@@ -61,8 +61,12 @@ class PhoneSyncWorker(QtCore.QThread):
                     if day not in keep and (day - _dt.timedelta(days=1)) not in keep: continue
                     for fn in os.listdir(d_):
                         if fn.lower().endswith('.edf'): z.write(os.path.join(d_, fn), f'DATALOG/{sub}/{fn}'); count += 1
+                rings = 0
+                for rp in self.ring_files:
+                    try: z.write(rp, 'O2/' + os.path.basename(rp)); rings += 1
+                    except OSError: pass
             os.replace(tmp, out)
-            self.done.emit(f'Phone copy updated: {out} ({os.path.getsize(out) / 1e6:.0f} MB, {count} files)')
+            self.done.emit(f'Phone copy updated: {out} ({os.path.getsize(out) / 1e6:.0f} MB, {count} card files' + (f', {rings} ring files)' if rings else ')'))
         except Exception as e:
             self.done.emit(f'Phone copy failed: {e}')
 
@@ -525,6 +529,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def companion_folders(self, root):
         home = os.path.expanduser('~')
         cands = [root, os.path.dirname(root) if root else None, SETTINGS.value('ox_folder', ''), self.phone_folder(),
+                 *[self._find_sleepscope_folder(r) for r in self.sync_roots()],
                  os.path.join(home, 'Dropbox'), os.path.join(home, 'Dropbox', 'SleepScope'), os.path.join(home, 'Dropbox', 'O2Ring'),
                  os.path.join(home, 'OneDrive'), os.path.join(home, 'Downloads'), os.path.join(home, 'Documents', 'SleepScope')]
         return [c for c in cands if c]
@@ -554,19 +559,64 @@ class MainWindow(QtWidgets.QMainWindow):
             if filled: parts.append(f'oximeter: {used} file{"s" if used != 1 else ""} found, SpO2 attached to {filled} session{"s" if filled != 1 else ""}')
             if hmatched: parts.append(f'Apple Health: matched {hmatched} night{"s" if hmatched != 1 else ""}')
             self.statusBar().showMessage(f'{len(self.nights)} nights loaded. ' + '; '.join(parts) + '.')
+    @staticmethod
+    def sync_roots():
+        """Dropbox and OneDrive roots on this PC. Covers 'Dropbox', team folders named '<Team> Dropbox', and the paths
+        the Dropbox app records in info.json."""
+        home = os.path.expanduser('~'); roots = []
+        for base in (os.environ.get('LOCALAPPDATA', ''), os.environ.get('APPDATA', '')):
+            info = os.path.join(base, 'Dropbox', 'info.json') if base else ''
+            if info and os.path.exists(info):
+                try:
+                    with open(info, encoding='utf-8') as fh:
+                        for v in json.load(fh).values():
+                            if isinstance(v, dict) and v.get('path'): roots.append(v['path'])
+                except Exception: pass
+        try:
+            for name in os.listdir(home):
+                if (name == 'Dropbox' or name.endswith(' Dropbox') or name == 'OneDrive' or name.startswith('OneDrive - ')) and os.path.isdir(os.path.join(home, name)):
+                    roots.append(os.path.join(home, name))
+        except OSError: pass
+        out = []
+        for r in roots:
+            r = os.path.normpath(r)
+            if os.path.isdir(r) and r not in out: out.append(r)
+        out.sort(key=lambda r: 'onedrive' in r.lower())          # Dropbox first
+        return out
+    @staticmethod
+    def _find_sleepscope_folder(root):
+        """An existing folder named SleepScope (any case) at the root or one level down, such as a team member folder."""
+        try:
+            for name in os.listdir(root):
+                if name.lower() == 'sleepscope' and os.path.isdir(os.path.join(root, name)): return os.path.join(root, name)
+            for name in sorted(os.listdir(root)):
+                sub = os.path.join(root, name)
+                if name.startswith('.') or not os.path.isdir(sub): continue
+                try:
+                    for n2 in os.listdir(sub):
+                        if n2.lower() == 'sleepscope' and os.path.isdir(os.path.join(sub, n2)): return os.path.join(sub, n2)
+                except OSError: pass
+        except OSError: pass
+        return None
     def phone_folder(self):
         f = SETTINGS.value('phone_folder', '')
         if f == 'off': return None
         if f: return f
-        for cand in (os.path.join(os.path.expanduser('~'), 'Dropbox'), os.path.join(os.path.expanduser('~'), 'OneDrive')):
-            if os.path.isdir(cand): return os.path.join(cand, 'SleepScope')
-        return None
+        roots = self.sync_roots()
+        for r in roots:
+            hit = self._find_sleepscope_folder(r)
+            if hit: return hit
+        return os.path.join(roots[0], 'SleepScope') if roots else None
     def _phone_sync(self):
         folder = self.phone_folder()
         if not folder or not self.data or not self.data.get('datalog') or not os.path.isdir(self.data['datalog']): return
         if os.path.abspath(self.data['root']).startswith(os.path.abspath(folder)): return      # loading from the phone copy itself
         if getattr(self, 'sync_worker', None) is not None and self.sync_worker.isRunning(): return
-        self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights)
+        try:
+            import time as _t
+            ring = [p_ for p_ in loader.find_companion_files(self.companion_folders(self.data.get('root')))[0] if _t.time() - os.path.getmtime(p_) < 60 * 86400]
+        except Exception: ring = []
+        self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights, ring)
         self.sync_worker.done.connect(lambda msg: self.statusBar().showMessage(msg, 15000)); self.sync_worker.start()
     def set_phone_folder(self):
         cur = self.phone_folder() or os.path.expanduser('~')
