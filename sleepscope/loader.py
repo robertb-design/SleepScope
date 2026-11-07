@@ -239,7 +239,7 @@ def import_oximeter_csv(path, nights):
     ti, si, pi = col('time', 'date'), col('spo2', 'oxygen', 'o2'), col('pulse', 'hr', 'heart')
     mi = col('motion', 'movement', 'activity'); ai = [i for i, h in enumerate(hdr) if 'reminder' in h or 'alarm' in h or 'vibrat' in h]
     if ti is None or si is None: return 0
-    fmts = ['%H:%M:%S %b %d %Y', '%I:%M:%S %p %b %d %Y', '%b %d %Y %H:%M:%S', '%d %b %Y %H:%M:%S', '%H:%M:%S %m/%d/%Y', '%I:%M:%S %p %m/%d/%Y', '%m/%d/%Y %I:%M:%S %p', '%Y-%m-%d %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%H:%M:%S %d/%m/%Y', '%Y-%m-%dT%H:%M:%S']
+    fmts = ['%H:%M:%S %b %d %Y', '%I:%M:%S %p %b %d %Y', '%I:%M:%S%p %b %d, %Y', '%I:%M:%S %p %b %d, %Y', '%H:%M:%S %b %d, %Y', '%b %d %Y %H:%M:%S', '%d %b %Y %H:%M:%S', '%H:%M:%S %m/%d/%Y', '%I:%M:%S %p %m/%d/%Y', '%m/%d/%Y %I:%M:%S %p', '%Y-%m-%d %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%H:%M:%S %d/%m/%Y', '%Y-%m-%dT%H:%M:%S']
     ts, sp, pu, mo, al = [], [], [], [], []
     fmt = None
     for r in rows[1:]:
@@ -256,8 +256,10 @@ def import_oximeter_csv(path, nights):
         if t is None: continue
         try: s = float(r[si])
         except ValueError: continue
+        if not 50 <= s <= 100: s = np.nan          # O2 Insight Pro writes 255 for no reading; ViHealth writes --
         try: p = float(r[pi]) if pi is not None else np.nan
         except ValueError: p = np.nan
+        if not 25 <= p <= 250: p = np.nan
         try: mv = float(r[mi]) if mi is not None and len(r) > mi else np.nan
         except ValueError: mv = np.nan
         flag = 0.0
