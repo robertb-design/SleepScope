@@ -80,7 +80,10 @@ class OverviewView(QtWidgets.QWidget):
         def g(k): return np.array([s.get(k, np.nan) for s in S], dtype=float)
         def plot(row, col, title, unit=''):
             p = self.gl.addPlot(row=row, col=col, axisItems={'bottom': BarAxis(labs, orientation='bottom')}); style_plot(p)
-            p.setTitle(title, size='10pt', color='#0b0b0b'); p.setLabel('left', unit); p.setMouseEnabled(x=False, y=False); p.hideButtons()
+            from . import explain as _ex
+            cap = _ex.overview_caption(title)
+            p.setTitle(f"<span style='font-size:10pt;color:#0b0b0b'>{title}</span>" + (f"<br><span style='font-size:8.5pt;color:#52514e'>{cap}</span>" if cap else ''))
+            p.setLabel('left', unit); p.setMouseEnabled(x=False, y=False); p.hideButtons()
             ax = p.getAxis('bottom'); ax.setStyle(tickFont=QtGui.QFont('Segoe UI', 8), autoExpandTextSpace=True)
             # thin the labels so they never overlap: short form past 6 nights, every k-th past 14
             short = len(labs) > 6; k = max(1, int(np.ceil(len(labs) / 14)))
@@ -95,7 +98,7 @@ class OverviewView(QtWidgets.QWidget):
         for i, v in enumerate(g('hours')):
             t = pg.TextItem(f'{v:.1f}', color=C['text2'], anchor=(0.5, 1)); t.setPos(i, v); p.addItem(t)
         # AHI machine vs app
-        p = plot(0, 1, 'AHI: machine (blue) vs app flow-only (orange), RDI app (violet line)', '/h')
+        p = plot(0, 1, 'AHI: machine (blue) vs app recheck (orange), RDI app (violet line)', '/h')
         bars(p, g('AHI'), C['blue'], 0.28, -0.3); bars(p, g('app_AHI'), C['orange'], 0.28, 0.0)
         p.plot(x, g('app_RDI'), pen=pg.mkPen(C['violet'], width=2), symbol='o', symbolBrush=C['violet'], symbolPen=None, symbolSize=7)
         p.addLine(y=5, pen=pg.mkPen(C['red'], style=QtCore.Qt.DashLine))
@@ -292,7 +295,10 @@ at least 1.5x the recent median) follows within 10 s. RDI (app) = apneas + hypop
 Zero windows across a night means no Cheyne-Stokes pattern was found.</li>
 <li><b>Mode:</b> "CPAP" when set pressure is flat after the first 15% of the session, otherwise "AutoSet". Inferred from pressure, not read from settings
 (STR.edf carries the settings when present on the card).</li>
-<li><b>ODI:</b> count of SpO2 drops of 3% or more from the preceding 60 s maximum, per hour, when oximetry exists.</li>
+<li><b>ODI:</b> dips of 3% or more below the median of the preceding 2 minutes, lasting 10 s or longer, per hour of oximetry. Dips that coincide (within 10 s) with ring motion of 30 or more are treated as sensor artifact and left out; the count left out is shown separately.</li>
+<li><b>Hypopnea confirmation:</b> when the ring covers an app hypopnea, it counts only if SpO2 falls 3 points or more below the 2 minute pre-event median during the event or within 30 s after it, or the pulse rises 6 bpm or more within 15 s after it (a stand-in for an EEG arousal, which home equipment cannot see). The H confirmed column shows how many passed. Without the ring, hypopneas stay flow only and are counted.</li>
+<li><b>Large leak:</b> app events whose midpoint falls inside a large-leak run (over 24 L/min for 60 s or more) are listed but not counted in the app's AHI, RDI or flow limitation counts, because the flow signal is unreliable while air is escaping. The In leak column counts them. Machine events are never altered.</li>
+<li><b>Pressure setting column:</b> taken from the machine's own daily settings record (STR.edf) when the card has it; otherwise from the trace with each session's ramp (up to 45 minutes) excluded, marked (trace).</li>
 </ul>
 <p><b>Breath metrics</b> are descriptive only and do not generate events: Ti, Te, I:E, PIF, PEF, PIF/PEF, integrated tidal volume, plateau ratio.
 The machine's flow limitation index is proprietary and could not be reproduced from breath shape alone, which is why the machine channel is used for runs.</p>
@@ -326,6 +332,10 @@ class MainWindow(QtWidgets.QMainWindow):
         left = QtWidgets.QWidget(); ll = QtWidgets.QVBoxLayout(left); ll.setContentsMargins(4, 4, 0, 4)
         self.night_table = Table(['Night', 'Hours', 'Pressure setting', 'AHI', 'AHI app', 'Leak 95', 'P 95'])
         self.night_table.itemSelectionChanged.connect(self._night_selected); ll.addWidget(self.night_table)
+        from . import explain as _ex
+        for ci, k in enumerate(['label', 'hours', 'setting', 'AHI', 'app_AHI', 'leak_95', 'press_95']):
+            it = self.night_table.horizontalHeaderItem(ci)
+            if it is not None: it.setToolTip(_ex.COLUMN_HELP.get(k, ''))
         self.device_label = QtWidgets.QLabel(''); self.device_label.setWordWrap(True); self.device_label.setStyleSheet('color:#52514e'); ll.addWidget(self.device_label)
         left.setMinimumWidth(440); split.addWidget(left)
 
@@ -346,7 +356,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ev_table = Table(['Time', 'Type', 'Source', 'Dur s', 'Set P', 'Mask P', 'Leak', 'FlowLim', 'Detail']); self.ev_table.doubleClicked.connect(self._event_dbl)
         evl.addWidget(self.ev_table); self.tabs.addTab(Page(ev_w, 'Events', 'Every event the machine scored and every one the app found. Double-click to see it.', '#e34948'), 'Events')
         self.breaths = BreathView(); self.tabs.addTab(Page(self.breaths, 'Breaths', 'Breath by breath mechanics, and events against the pressure they happened at.', '#1baf7a'), 'Breaths')
-        self.stats_table = Table([h for _, h, _ in scoring.STAT_COLUMNS]); self.tabs.addTab(Page(self.stats_table, 'Statistics', 'Every number for every night. Export to CSV from the toolbar.', '#eda100'), 'Statistics')
+        self.stats_table = Table([h for _, h, _ in scoring.STAT_COLUMNS]); self.tabs.addTab(Page(self.stats_table, 'Statistics', 'Every number for every night. Hover a column heading for what it means. Export to CSV from the toolbar.', '#eda100'), 'Statistics')
         dev = QtWidgets.QWidget(); dl = QtWidgets.QVBoxLayout(dev); self.dev_text = QtWidgets.QLabel(''); self.dev_text.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         dl.addWidget(self.dev_text); self.str_table = Table(['Day']); dl.addWidget(self.str_table); self.tabs.addTab(Page(dev, 'Device and settings', 'Machine identity and the machine\'s own daily summary when the card root is opened.', '#8a8985'), 'Device and settings')
         meth = QtWidgets.QTextBrowser(); meth.setHtml(METHODS); self.tabs.addTab(Page(meth, 'Methods', 'How every number is computed and how far to trust it.', '#1d4f91'), 'Methods')
@@ -396,6 +406,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_label.setText(f"{ident.get('model', 'Unknown device')}  SN {ident.get('serial', '?')}\n{data['datalog']}")
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
         self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
+        scoring.apply_str_settings(self.nights, self.night_view.str_data)
         self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
         if self.nights: self._auto_companions(data.get('root'))
         if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self._show_tab(self.synopsis)
@@ -405,10 +416,14 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = []
         for n in self.nights:
             s = n.stats
-            rows.append([n.label, f"{s['hours']:.2f}", scoring.pressure_label(s), f"{s['AHI']:.2f}", f"{s['app_AHI']:.2f}", scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
+            rows.append([n.label, f"{s['hours']:.2f}", s.get('setting') or scoring.pressure_label(s), f"{s['AHI']:.2f}", f"{s['app_AHI']:.2f}", scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
         self.night_table.fill(rows)
     def _fill_stats(self):
         self.stats_table.fill([[scoring.fmt(k, n.stats.get(k)) for k, _, _ in scoring.STAT_COLUMNS] for n in self.nights])
+        from . import explain as _ex
+        for ci, (k, lab, _) in enumerate(scoring.STAT_COLUMNS):
+            it = self.stats_table.horizontalHeaderItem(ci)
+            if it is not None and k in _ex.COLUMN_HELP: it.setToolTip(f'<b>{lab}</b><br>{_ex.COLUMN_HELP[k]}')
         total, hit = scoring.validation_summary(self.nights)
         self.stats_table.setToolTip(f'App detector reproduced {hit} of {total} machine-scored apneas on this card.')
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded. App detector reproduced {hit} of {total} machine-scored apneas on this card.")

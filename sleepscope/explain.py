@@ -232,3 +232,61 @@ def point(kind, **c) -> str:
     detail = f"Openness {op:.2f} (1 is free, 0 is stopped)" + (f", leak {lk:.0f} L/min" if lk else '') + (f", pressure {pr:.1f} cmH2O" if pr is not None else '')
     do = {"breathing freely": "nothing; this is the goal.", "airway narrowing": "yellow stretches are what a slightly higher minimum pressure or less EPR smooths out; if they coincide with a leak pool, fix the seal first. Both are prescriber conversations.", "airflow stopped": "a crater with a pillar is an event already explained by the pillar; a crater without one is worth looking at in the Night tab."}[level]
     return f"<b>{level.capitalize()}</b>, {n} at {t}<br>{meaning}<br><i>{detail}.</i><br><b>What to do:</b> {do}"
+
+
+# ----------------------------------------------------------------------------- one-line captions for quick review
+OVERVIEW_CAPTIONS = {
+    'Usage': 'Hours on the mask each night. Aim for 4 or more every night, 7 or more is better. Dotted line is 4 h.',
+    'AHI': 'Breathing events per hour. Under 5 means treated, under 1 is excellent. Blue is the machine, orange is SleepScope rechecking.',
+    'Machine events': 'Kind of events. Red: airway closed. Violet: brain paused breathing. Orange: shallow breathing. A few of each is normal.',
+    'Set pressure': 'How hard the machine pushed. When the blue 95th dot sits on the red top line, it is hitting its ceiling.',
+    'Leak': 'Air escaping from the mask. Under the dashed 24 line is fine; above it the seal is losing therapy.',
+    'Flow limitation': 'Minutes of partly narrowed breathing. Fewer is better; under 10 minutes a night is good.',
+    'Breathing': 'Breaths per minute and air moved. Steady from night to night is what you want.',
+    'SpO2': 'Blood oxygen from the ring. Mean should stay 94 or higher; ODI (dips per hour) under 5.',
+    'Time at max': 'Share of the night at top pressure. Over a third suggests the ceiling is a step low.',
+}
+NIGHT_CAPTIONS = {
+    'flow': 'Each wiggle is one breath. Flat stretches are pauses; shaded bands mark events.',
+    'press': 'Pressure delivered. A line pinned flat at the top means the machine wanted more.',
+    'leak': 'Air escaping from the mask. Spikes over the dashed line mean the seal broke.',
+    'flowlim': 'How flattened each breath was, 0 round to 1 flat. Bursts mean the airway was sagging.',
+    'vent': 'Each breath against your recent normal. Dips under the lower dashed line are shallow breathing.',
+    'rr': 'Breaths per minute. 12 to 20 is typical; sudden swings follow events or waking.',
+    'tv': 'Size of each breath. Steady is good; drops line up with events.',
+    'mv': 'Air moved per minute. Drops mean less oxygen coming in.',
+    'spo2': 'Blood oxygen from the ring. 94 and up is normal; a drop of 3 or more points is a dip.',
+    'pulse': 'Heart rate from the ring. Sudden jumps are brief wake ups.',
+    'motion': 'Hand movement from the ring. Spikes are turning over; oxygen dips during spikes are often the sensor.',
+    'apple_stage': 'Sleep stage from the Watch: deep, core, REM or awake.',
+    'apple_hr': 'Heart rate and oxygen from the Watch, sampled every few minutes.',
+}
+COLUMN_HELP = {
+    'label': 'The night, dated by the evening it started.', 'hours': 'Hours on the mask. 4 or more is the compliance line; 7 or more is the goal.',
+    'sessions': 'How many times the mask went on. More than 2 means you took it off during the night.', 'mode': 'AutoSet varies pressure; CPAP holds one pressure.',
+    'setting': 'Pressure range set on the machine. From the machine\'s own record when available, otherwise from the trace (marked trace).',
+    'AHI': 'Machine events per hour. Under 5 treated, under 1 excellent.', 'OA': 'Obstructive apneas: airway closed.', 'CA': 'Central apneas: brain paused breathing.',
+    'H': 'Hypopneas: shallow breathing.', 'UA': 'Apneas the machine could not classify.', 'arousals': 'Brief wake ups the machine noticed.',
+    'app_AHI': 'SleepScope\'s own recount from the raw breathing, with ring and leak checks. Usually higher than the machine.',
+    'app_hyp_conf_txt': 'How many of SleepScope\'s hypopneas the ring confirmed with an oxygen dip or pulse jump. Unconfirmed ones are not counted.',
+    'app_leak_excluded': 'Events that happened during a big leak, listed but not counted because the reading is unreliable then.',
+    'app_unflagged': 'Pauses SleepScope found that the machine did not score.', 'app_RDI': 'SleepScope events plus flow limited breaths that ended in a recovery breath, per hour.',
+    'app_flowlim_runs': 'Stretches of 10 s or more of flattened breathing.', 'app_RERA_like': 'Flattened stretches that ended in a big recovery breath, a likely brief wake up.',
+    'press_min': 'Lowest pressure, including the ramp at the start.', 'press_med': 'Typical pressure through the night.', 'press_95': 'Pressure was at or below this 95% of the time.',
+    'press_max': 'Highest pressure.', 'press_at_max_pct': 'Share of the night at the top pressure. Over a third suggests the ceiling is low.', 'epr': 'Exhale relief: how much pressure drops when you breathe out.',
+    'leak_med': 'Typical leak. Near 0 is a good seal.', 'leak_95': 'Leak was at or below this 95% of the time. Under 24 L/min is good.', 'leak_pct_large': 'Share of the night with a big leak over 24 L/min.',
+    'leak_min': 'Minutes of big leak.', 'flowlim_95': 'How flattened the worst breaths were, 0 to 1. Under 0.1 is round, over 0.3 is struggling.',
+    'flowlim_minutes': 'Minutes of flattened breathing.', 'snore_95': 'Snoring level of the loudest stretches. 0 is quiet.',
+    'rr_med': 'Breaths per minute.', 'tv_med': 'Size of a typical breath in mL.', 'mv_med': 'Air moved per minute in liters.',
+    'ti_med': 'Seconds spent breathing in.', 'ie_med': 'Breathing in time compared with breathing out time.', 'pifpef_med': 'Peak inhale speed compared with peak exhale speed.',
+    'periodic_windows': 'Five minute windows with a waxing and waning breathing cycle. 0 is best.',
+    'spo2_mean': 'Average blood oxygen. 94 or higher is normal.', 'spo2_min': 'Lowest oxygen reading. One brief low can be the sensor.',
+    'spo2_pct_lt90': 'Share of the night under 90%. Near 0 is the goal.', 'spo2_pct_lt88': 'Share of the night under 88%. 5 minutes or more is a doctor conversation.',
+    'ODI': 'Oxygen dips of 3 points or more per hour, sensor movement removed. Under 5 is normal.', 'pulse_mean': 'Average heart rate from the ring.',
+}
+
+
+def overview_caption(title):
+    for k, v in OVERVIEW_CAPTIONS.items():
+        if title.startswith(k): return v
+    return ''

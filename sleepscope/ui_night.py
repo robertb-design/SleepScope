@@ -85,7 +85,9 @@ class NightView(QtWidgets.QWidget):
         first = None
         for key, title, unit, yr in PANELS:
             p = self.gl.addPlot(axisItems={'bottom': TimeAxis(t0, orientation='bottom')}); self.gl.nextRow()
-            style_plot(p); p.setLabel('left', unit); p.setTitle(title, size='9pt', color='#0b0b0b')
+            from . import explain as _ex
+            cap = _ex.NIGHT_CAPTIONS.get(key, '')
+            style_plot(p); p.setLabel('left', unit); p.setTitle(f"<span style='font-size:9pt;color:#0b0b0b'>{title}</span>" + (f"&nbsp;&nbsp;<span style='font-size:8pt;color:#52514e'>{cap}</span>" if cap else ''))
             p.titleLabel.item.setFont(QtGui.QFont('Segoe UI', 9, QtGui.QFont.DemiBold))
             p.setDownsampling(auto=True, mode='peak'); p.setClipToView(True); p.setMouseEnabled(y=False)
             if yr: p.setYRange(*yr, padding=0)

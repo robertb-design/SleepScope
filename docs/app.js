@@ -38,7 +38,7 @@ function normalise(files) { // flatten to folder/name keyed by the date folder w
   const out = {}; for (const [k, v] of Object.entries(files)) { if (k.startsWith('companion/')) { out[k] = v; continue; } const parts = k.split('/'); const name = parts.pop(); if (/^STR\.edf$/i.test(name)) { out['STR.edf'] = v; continue; } const folder = parts.length ? parts.pop() : (name.match(/^(\d{8})_/) || [, 'x'])[1]; out[folder + '/' + name] = v; } return out;
 }
 async function loadFiles(files, label) {
-  const strKey = Object.keys(files).find(k => /(^|\/)STR\.edf$/i.test(k)); strData = strKey ? SS.readStr(files[strKey]) : null;
+  const strKey = Object.keys(files).find(k => /(^|\/)STR\.edf$/i.test(k)); strData = strKey ? SS.readStr(files[strKey]) : null; SS.setStr(strData);
   const prog = $('progress'); prog.style.display = 'block'; const bar = prog.firstElementChild; $('loadmsg').textContent = 'Reading ' + label + '…';
   const t0 = Date.now();
   nights = await SS.buildSessions(files, (i, n, name) => { bar.style.width = (100 * i / Math.max(n, 1)) + '%'; $('loadmsg').textContent = `Reading ${name} (${i + 1}/${n})`; });
@@ -107,7 +107,7 @@ function drawOverview() {
   Plotly.react('ch-usage', [{ type: 'bar', x, y: nights.map(n => +n.hours.toFixed(2)), marker: { color: C.blue }, name: 'Hours' }], { title: { text: 'Usage (hours), dashed = 4 h', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 4, y1: 4, line: { dash: 'dash', color: '#52514e', width: 1 } }], yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } } }, { displayModeBar: false, responsive: true });
   Plotly.react('ch-ahi', [
     { type: 'bar', x, y: S.map(s => +s.AHI.toFixed(2)), marker: { color: C.blue }, name: 'AHI machine' },
-    { type: 'bar', x, y: S.map(s => +s.app_AHI.toFixed(2)), marker: { color: C.orange }, name: 'AHI app (flow only)' }],
+    { type: 'bar', x, y: S.map(s => +s.app_AHI.toFixed(2)), marker: { color: C.orange }, name: 'AHI app (rechecked)' }],
     { title: { text: 'AHI per night, dashed = 5', font: { size: 13 } }, barmode: 'group', margin: { l: 34, r: 10, t: 30, b: 60 }, legend: { orientation: 'h', y: -0.35, font: { size: 10 } }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 5, y1: 5, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
   Plotly.react('ch-leak', [{ type: 'bar', x, y: S.map(s => +s.leak_95.toFixed(1)), marker: { color: S.map(s => s.leak_95 > 24 ? C.red : C.aqua) }, name: 'Leak 95th' }],
     { title: { text: 'Leak, 95th percentile (L/min), dashed = 24', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 24, y1: 24, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
@@ -146,6 +146,11 @@ function showNight(i) {
   if (hasOx) { layout.yaxis6 = { domain: dom(5), title: { text: 'SpO2', font: { size: 10 } }, range: [80, 100] }; layout.yaxis9 = { overlaying: 'y6', side: 'right', range: [40, 120], showgrid: false, title: { text: 'bpm', font: { size: 10 } } }; }
   if (hasAp) { const k = hasOx ? 6 : 5; layout['yaxis' + (k + 1)] = { domain: dom(k), tickvals: [0, 1, 2, 3, 4], ticktext: ['bed', 'deep', 'core', 'REM', 'wake'], range: [-0.6, 4.6], tickfont: { size: 9 } }; layout['yaxis' + (k + 2)] = { domain: dom(k + 1), title: { text: 'Watch', font: { size: 10 } }, range: [40, 110] }; }
   Plotly.newPlot('ch-night', tr, layout, { displayModeBar: false, responsive: true, scrollZoom: true });
+  const capLines = ['<b>Pressure</b> (top): what the machine delivered. A line pinned flat at the top means it wanted more.', '<b>Leak</b>: air escaping from the mask. Spikes over 24 mean the seal broke.', '<b>FL</b>, flow limitation: how flattened each breath was, 0 round to 1 flat. Bursts mean the airway was sagging.', '<b>Vt</b>, breath size: steady is good; drops line up with events.', '<b>Vent</b>: each breath against your recent normal. Dips are shallow breathing. Shaded bands are events.'];
+  if (hasOx) capLines.push('<b>SpO2</b> (red, left scale): blood oxygen from the ring, 94 and up is normal. <b>Pulse</b> (orange, right scale): sudden jumps are brief wake ups. <b>Motion</b> (teal fill): hand movement; oxygen dips during it are often the sensor.');
+  if (hasAp) capLines.push('<b>Watch</b>: sleep stage from the Apple Watch.');
+  let capEl = document.getElementById('nightcap'); if (!capEl) { capEl = document.createElement('div'); capEl.id = 'nightcap'; capEl.className = 'cap'; document.getElementById('ch-night').after(capEl); }
+  capEl.innerHTML = capLines.map(l => `<div style="margin-bottom:4px">${l}</div>`).join('');
   const ev = n.sessions.flatMap(ses => [...ses.machine, ...ses.app].map(e => ({ e, ses }))).sort((a, b) => a.e.start - b.e.start).filter(x => x.e.label !== 'Flow Limitation Run' || x.e.dur >= 60);
   const list = $('evlist'); list.innerHTML = ev.length ? '' : '<p class="muted">No events.</p>';
   for (const { e, ses } of ev) { const d = document.createElement('div'); d.className = 'evt'; d.innerHTML = `<span class="t">${SS.fmtTime(e.start)}:${String(e.start.getSeconds()).padStart(2, '0')}</span><span class="pill" style="background:${EVC[e.label] || C.grey}">${e.source}</span><span class="l">${e.label} ${e.dur ? e.dur.toFixed(0) + ' s' : ''}<br><span class="muted">${e.detail}</span></span>`; d.onclick = () => zoomEvent(ses, e); list.appendChild(d); }
