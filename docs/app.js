@@ -20,9 +20,10 @@ const idb = { db: null,
 async function filesFromInputs(list) {
   const files = {};
   for (const f of list) {
-    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || name.includes('__MACOSX')) continue; if (/\.edf$/i.test(name)) files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); else if (/\.(csv|txt)$/i.test(name)) { const t = await entry.async('string'); if (isCompanion(t)) files['companion/' + name.split('/').pop()] = t; } } }
+    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || name.includes('__MACOSX')) continue; if (/\.edf$/i.test(name)) files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); else if (/(^|\/)\d{14}$/.test(name)) files['companion/raw/' + name.split('/').pop()] = await entry.async('arraybuffer'); else if (/\.(csv|txt)$/i.test(name)) { const t = await entry.async('string'); if (isCompanion(t)) files['companion/' + name.split('/').pop()] = t; } } }
     else if (/\.edf$/i.test(f.name)) files[(f.webkitRelativePath || f.name).replace(/\\/g, '/')] = await f.arrayBuffer();
     else if (/\.(csv|txt)$/i.test(f.name)) { const t = await f.text(); if (isCompanion(t)) files['companion/' + f.name] = t; }
+    else if (/^\d{14}$/.test(f.name)) files['companion/raw/' + f.name] = await f.arrayBuffer();
   }
   return files;
 }
@@ -30,7 +31,7 @@ async function filesFromInputs(list) {
 function isCompanion(t) { const h = (t.slice(0, 200).split(/\r?\n/)[0] || '').toLowerCase(); return ((h.includes('oxygen') || h.includes('spo2')) && (h.includes('time') || h.includes('date'))) || /^(sleep|heart rate|blood oxygen),/.test(h); }
 function applyCompanions(files) {
   let oxFiles = 0, oxSessions = 0, health = null;
-  for (const [k, t] of Object.entries(files)) { if (!k.startsWith('companion/') || typeof t !== 'string') continue; const h = t.slice(0, 200).toLowerCase(); if (h.includes('oxygen') || h.includes('spo2')) { const n = SS.importOximeterCsv(t, nights); if (n) { oxFiles++; oxSessions += n; } } else { const d = AH.readShortcutCsv(t); if (d.sleep.length || d.hr.length) health = d; } }
+  for (const [k, t] of Object.entries(files)) { if (k.startsWith('companion/raw/') && t instanceof ArrayBuffer) { const n = SS.importO2RingRaw(t, k.split('/').pop(), nights); if (n) { oxFiles++; oxSessions += n; } continue; } if (!k.startsWith('companion/') || typeof t !== 'string') continue; const h = t.slice(0, 200).toLowerCase(); if (h.includes('oxygen') || h.includes('spo2')) { const n = SS.importOximeterCsv(t, nights); if (n) { oxFiles++; oxSessions += n; } } else { const d = AH.readShortcutCsv(t); if (d.sleep.length || d.hr.length) health = d; } }
   if (health) appleData = health;
   return { oxFiles, oxSessions, health: !!health };
 }

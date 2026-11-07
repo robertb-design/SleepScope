@@ -224,7 +224,34 @@ def scan(root, min_session_s=300, progress=None):
 
 
 # ----------------------------------------------------------------------------- external oximeter CSV (Wellue O2Ring, Checkme, generic)
+O2RING_RAW_NAME = re.compile(r'^\d{14}$')
+
+
+def is_o2ring_raw(path):
+    """A recording as saved by Wellue O2 Insight Pro: file named yyyymmddHHMMSS (no extension), 10 byte header starting
+    01 03, then 3 bytes per second (SpO2 %, pulse bpm, motion; 255 = no reading), then a 48 byte footer.
+    Verified against ViHealth CSV exports of the same nights, every second identical."""
+    if not O2RING_RAW_NAME.match(os.path.basename(path)): return False
+    try:
+        if os.path.getsize(path) < 58 + 3 * 60: return False
+        with open(path, 'rb') as f: h = f.read(2)
+        return h == b'\x01\x03'
+    except OSError:
+        return False
+
+
+def import_o2ring_raw(path, nights):
+    d = open(path, 'rb').read()
+    n = (len(d) - 58) // 3 if (len(d) - 58) % 3 == 0 else (len(d) - 10) // 3
+    a = np.frombuffer(d[10:10 + 3 * n], dtype=np.uint8).reshape(n, 3).astype(float)
+    t0 = dt.datetime.strptime(os.path.basename(path), '%Y%m%d%H%M%S').timestamp()
+    sp, pu, mo = a[:, 0], a[:, 1], a[:, 2]
+    sp[(sp == 255) | (sp < 50) | (sp > 100)] = np.nan; pu[(pu == 255) | (pu < 25)] = np.nan; mo[mo == 255] = np.nan
+    return _attach_oximetry(t0 + np.arange(n, dtype=float), sp, pu, mo, np.zeros(n), True, False, nights)
+
+
 def import_oximeter_csv(path, nights):
+    if is_o2ring_raw(path): return import_o2ring_raw(path, nights)
     """Attach SpO2/pulse from a CSV export to matching sessions (resampled to 1 Hz over each session).
     Accepts Wellue/Viatom exports (columns like Time, Oxygen Level, Pulse Rate) and any CSV with a timestamp
     column plus columns containing 'spo2'/'oxygen' and 'pulse'/'hr'. Returns number of sessions filled."""
@@ -269,6 +296,11 @@ def import_oximeter_csv(path, nights):
         ts.append(t); sp.append(s); pu.append(p); mo.append(mv); al.append(flag)
     if not ts: return 0
     ts = np.array([t.timestamp() for t in ts]); sp = np.array(sp); pu = np.array(pu); mo = np.array(mo); al = np.array(al)
+    return _attach_oximetry(ts, sp, pu, mo, al, mi is not None, bool(ai), nights)
+
+
+def _attach_oximetry(ts, sp, pu, mo, al, has_motion, has_alerts, nights):
+    """Resample 1 Hz oximeter samples (epoch seconds) onto each overlapping session. Returns sessions filled."""
     filled = 0
     for nt in nights:
         for s in nt.sessions:
@@ -279,10 +311,10 @@ def import_oximeter_csv(path, nights):
             s.spo2 = np.interp(grid, ts[m], sp[m], left=np.nan, right=np.nan).astype(np.float32)
             s.pulse = np.interp(grid, ts[m], pu[m], left=np.nan, right=np.nan).astype(np.float32)
             s.spo2 = np.nan_to_num(s.spo2, nan=-1); s.pulse = np.nan_to_num(s.pulse, nan=-1)
-            if mi is not None and np.any(~np.isnan(mo[m])):
+            if has_motion and np.any(~np.isnan(mo[m])):
                 s.motion = np.nan_to_num(np.interp(grid, ts[m], np.nan_to_num(mo[m], nan=0.0), left=np.nan, right=np.nan), nan=-1).astype(np.float32)
             else: s.motion = None
-            s.ox_alerts = [dt.datetime.fromtimestamp(float(t)) for t in ts[m][al[m] > 0]] if ai else []
+            s.ox_alerts = [dt.datetime.fromtimestamp(float(t)) for t in ts[m][al[m] > 0]] if has_alerts else []
             filled += 1
     return filled
 
@@ -303,8 +335,11 @@ def find_companion_files(folders, max_depth=2):
             dirnames[:] = [d for d in dirnames if not d.startswith('.') and d.lower() not in ('datalog', 'node_modules', 'appdata')]
             for fn in filenames:
                 low = fn.lower()
-                if not low.endswith(('.csv', '.txt')): continue
                 path = os.path.join(dirpath, fn)
+                if O2RING_RAW_NAME.match(fn):
+                    if is_o2ring_raw(path): ox.append(path)
+                    continue
+                if not low.endswith(('.csv', '.txt')): continue
                 try:
                     if os.path.getsize(path) > 200 * 1024 * 1024: continue
                     with open(path, 'r', encoding='utf-8-sig', errors='ignore') as f: head = f.readline().lower()

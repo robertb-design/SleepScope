@@ -268,10 +268,21 @@ const SS = (() => {
     const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
     const parse = (s) => { s = s.trim(); let m = s.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/i); if (m && MON[m[5].toLowerCase()] !== undefined) { let h = +m[1]; if (m[4]) { if (/pm/i.test(m[4]) && h < 12) h += 12; if (/am/i.test(m[4]) && h === 12) h = 0; } return new Date(+m[7], MON[m[5].toLowerCase()], +m[6], h, +m[2], +m[3]); } m = s.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/i); if (m) { let h = +m[1]; if (m[4]) { if (/pm/i.test(m[4]) && h < 12) h += 12; if (/am/i.test(m[4]) && h === 12) h = 0; } return new Date(+m[7], +m[5] - 1, +m[6], h, +m[2], +m[3]); } m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})/); if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]); m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?$/i); if (m) { let h = +m[4]; if (m[7]) { if (/pm/i.test(m[7]) && h < 12) h += 12; if (/am/i.test(m[7]) && h === 12) h = 0; } return new Date(+m[3], +m[1] - 1, +m[2], h, +m[5], +m[6]); } return null; };
     const ts = [], sp = [], pu = [], mo = [], al = []; for (let i = 1; i < lines.length; i++) { const c = lines[i].includes('"') ? splitQ(lines[i]) : lines[i].split(','); const t = parse(c[ti] || ''); let v = parseFloat(c[si]); if (!t) continue; if (!(v >= 50 && v <= 100)) v = NaN; ts.push(t.getTime() / 1000); sp.push(v); { const pv = pi >= 0 ? parseFloat(c[pi]) : NaN; pu.push(pv >= 25 && pv <= 250 ? pv : NaN); } mo.push(mi >= 0 ? parseFloat(c[mi]) : NaN); let f = 0; for (const k of ai) { const x = parseFloat(c[k]); if (Number.isFinite(x) && x > f) f = x; } al.push(f); }
+    return attachOx(ts, sp, pu, mo, al, mi >= 0, nights);
+  }
+  // Wellue O2 Insight Pro raw recording: name yyyymmddHHMMSS, 10 byte header 01 03..., 3 bytes per second (SpO2, pulse, motion; 255 = none), 48 byte footer.
+  function importO2RingRaw(buf, name, nights) {
+    const m = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(name || ''); const d = new Uint8Array(buf); if (!m || d.length < 58 + 180 || d[0] !== 1 || d[1] !== 3) return 0;
+    const n = (d.length - 58) % 3 === 0 ? (d.length - 58) / 3 : Math.floor((d.length - 10) / 3); const t0 = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() / 1000;
+    const ts = [], sp = [], pu = [], mo = [], al = [];
+    for (let i = 0; i < n; i++) { const o = 10 + 3 * i, v = d[o], p = d[o + 1], q = d[o + 2]; ts.push(t0 + i); sp.push(v >= 50 && v <= 100 ? v : NaN); pu.push(p >= 25 && p < 255 ? p : NaN); mo.push(q === 255 ? NaN : q); al.push(0); }
+    return attachOx(ts, sp, pu, mo, al, true, nights);
+  }
+  function attachOx(ts, sp, pu, mo, al, hasMo, nights) {
     let filled = 0;
     for (const nt of nights) for (const s of nt.sessions) {
       const a = s.start.getTime() / 1000, b = a + s.duration; const idx = []; for (let i = 0; i < ts.length; i++) if (ts[i] >= a - 60 && ts[i] <= b + 60) idx.push(i); if (idx.length < 30) continue;
-      const n = Math.floor(s.duration); s.spo2 = new Float32Array(n).fill(-1); s.pulse = new Float32Array(n).fill(-1); s.motion = mi >= 0 ? new Float32Array(n).fill(-1) : null; s.oxAlerts = []; let j = 0;
+      const n = Math.floor(s.duration); s.spo2 = new Float32Array(n).fill(-1); s.pulse = new Float32Array(n).fill(-1); s.motion = hasMo ? new Float32Array(n).fill(-1) : null; s.oxAlerts = []; let j = 0;
       for (let k = 0; k < n; k++) { const t = a + k; while (j + 1 < idx.length && ts[idx[j + 1]] <= t) j++; const i0 = idx[j], i1 = idx[Math.min(j + 1, idx.length - 1)]; if (t < ts[i0] - 30 || t > ts[i1] + 30) continue; const w = ts[i1] > ts[i0] ? (t - ts[i0]) / (ts[i1] - ts[i0]) : 0; const ww = Math.max(0, Math.min(1, w)); s.spo2[k] = sp[i0] + (sp[i1] - sp[i0]) * ww; s.pulse[k] = pu[i0] + (pu[i1] - pu[i0]) * ww; if (s.motion) { const m0 = Number.isFinite(mo[i0]) ? mo[i0] : 0, m1 = Number.isFinite(mo[i1]) ? mo[i1] : 0; s.motion[k] = Math.max(m0, m1); } }
       for (const q of idx) if (al[q] > 0) s.oxAlerts.push(new Date(ts[q] * 1000));
       s.hasOx = true; filled++;
@@ -339,6 +350,6 @@ const SS = (() => {
     }
     return out;
   }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw };
 })();
 if (typeof module !== 'undefined') module.exports = SS;
