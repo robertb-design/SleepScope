@@ -69,12 +69,14 @@ HELP = """
 <li>Look at the Synopsis oxygen section, the SpO2 and pulse panels in the Night tab, and the SpO2 columns in Statistics.</li>
 </ol>
 
-<h2>Step 7. Add Apple Health (optional)</h2>
+<h2>Step 7. Add Apple Watch sleep (optional)</h2>
 <ol>
-<li>On the iPhone open the <b>Health</b> app, tap your profile picture (top right), scroll down and tap <b>Export All Health Data</b>, then <b>Export</b>. It takes a minute and produces <b>export.zip</b>.</li>
-<li>Send export.zip to the PC (AirDrop to a Mac then to the PC, email, or save to iCloud Drive and open it on the PC).</li>
-<li>In SleepScope click <b>Import Apple Health export…</b> and pick export.zip. The file can be several hundred MB; the import takes a minute or two.</li>
-<li>Sleep stages, heart rate, HRV and Watch SpO2 now appear in the Night tab, on the 3D Landscape (the ribbon in front of each strip) and in the Synopsis. Re-import after each new export; it is not remembered between launches.</li>
+<li>Wear the Watch to bed with Sleep tracking on (Watch app, Sleep). Breathing Disturbances fill in on their own on a Series 9, Ultra 2 or later.</li>
+<li>On the iPhone open the <b>Health</b> app, tap your profile picture (top right), scroll down and tap <b>Export All Health Data</b>, then <b>Export</b>. Save <b>export.zip</b> to <b>Dropbox, Sleepscope</b>. Unzipped is fine too; SleepScope reads either.</li>
+<li>That is all. Every Open SD card or Reload finds the newest export in the Sleepscope folder, matches it to each night, and packs the Watch nights into SleepScope card.zip so the phone shows them too. <b>Import Apple Health…</b> still works for a file kept somewhere else.</li>
+<li>What you get: <b>Watch BD</b> (Breathing Disturbances per hour) beside the machine AHI, <b>Mask on % of sleep</b> (how much of the Watch's sleep happened with the mask on, minute by minute), Watch asleep hours, deep plus REM minutes, HRV and breathing rate. They show in the Statistics table, the Night tab, the 3D ribbon and the Synopsis.</li>
+<li>How to read it: the Watch measures wrist motion, not airflow, so its Breathing Disturbances will not match the machine AHI exactly. Use it as a trend, and as the only check on nights the mask comes off. Mask on % below 90 means untreated sleep; that is the first thing to fix.</li>
+<li>Export again every week or two; each export replaces the last.</li>
 </ol>
 
 <h2>Step 8. Routine</h2>

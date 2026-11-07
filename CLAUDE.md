@@ -31,6 +31,9 @@ Desktop (`sleepscope/`):
 - `scoring.py`: breath detection, ventilation ratio, app events (apnea, hypopnea, flow limitation runs,
   large leak, periodic breathing), `annotate_events` (leak exclusion, ring confirmation of hypopneas),
   `desat_events` and ODI, `night_stats`, `STAT_COLUMNS`, settings text, `oximetry_report` (timeline for Claude).
+- `apple_health.py`: Health export reader (regex stream; zip, unzipped folder or export.xml), `attach` (per night
+  `night.apple`: stages, Breathing Disturbances, mask coverage of Watch sleep), `watch_fields` (the `w_*` columns), `to_sync`.
+  Exports in the companion folders are found automatically (`find_companion_files`), newest wins.
 - `synopsis.py`: rule based plain English synopsis for a date range.
 - `explain.py`: plain language for every chart (`overview`, `night`), one line captions
   (`OVERVIEW_CAPTIONS`, `NIGHT_CAPTIONS`), column help (`COLUMN_HELP`), click explanations in 3D (`point`).
@@ -57,6 +60,13 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 - O2 Insight Pro raw file: name yyyymmddHHMMSS (no extension, the start time), 10 byte header starting
   01 03, then 3 bytes per second (SpO2, pulse, motion; 255 = no reading), then a 48 byte footer. Verified
   second by second against ViHealth CSVs on two nights.
+- Apple Health export: `export.zip` holding `apple_health_export/export.xml` (one `<Record>` per line, local times
+  `2026-11-02 23:45:51 -0500`). Used types: SleepAnalysis (AsleepCore/Deep/REM, Awake, InBed; several sources, the one
+  with most stage detail wins), HeartRate, OxygenSaturation (fraction), RespiratoryRate, HeartRateVariabilitySDNN, and
+  `HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances` (one record per Watch night, spanning the sleep, value is a
+  per hour rate although the unit says count). Verified on Robert's Ultra 2 export.
+- Watch data reaches the phone as `health.json` inside `SleepScope card.zip` (desktop `apple_health.to_sync`, phone
+  `AH.fromSync`), trimmed to the card's nights.
 
 ## Scoring rules that matter
 - AHI (machine) comes from the machine. The app's own recount is shown beside it, never instead of it.
@@ -67,6 +77,9 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
   excluding dips within 10 s of ring motion 30 or more.
 - Pressure setting column: STR.edf when present, otherwise the trace with each session's ramp (45 min) skipped,
   labelled "(trace)".
+- Watch columns: `w_bd` Breathing Disturbances (shown beside the machine AHI, never instead of it), `w_cover` share of
+  Watch asleep minutes overlapping machine sessions, `w_asleep`, `w_deeprem`, `w_hrv`, `w_rr`. Nights with only
+  daytime Watch samples get no Watch data.
 - Validation: the app detector reproduced 17 of 19 and 21 of 22 machine apneas on the two real cards tested.
 
 ## House rules (from Robert)
@@ -90,4 +103,4 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 - Connect Dropbox on the phone (Dropbox app key, PKCE) so the phone loads the latest zip without a file pick.
 - One page doctor report export (week summary in the format a physician expects).
 - Merge an archive folder with the live card so history and new nights load together.
-- Apple Health was parked as too fiddly; the Shortcut route works but needs a simpler setup.
+- Apple Health: the full export route is built and automatic. The Shortcut route remains but is fiddly.

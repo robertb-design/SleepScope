@@ -12,7 +12,7 @@ Reads the AirSense 10/11 card layout:
 pyedflib refuses EDF+D files, so the annotation files are parsed by hand.
 """
 from __future__ import annotations
-import os, re, json, glob, datetime as dt
+import os, zipfile, re, json, glob, datetime as dt
 from dataclasses import dataclass, field
 import numpy as np
 
@@ -322,7 +322,8 @@ def _attach_oximetry(ts, sp, pu, mo, al, has_motion, has_alerts, nights):
 # ----------------------------------------------------------------------------- find companion files near the card
 def find_companion_files(folders, max_depth=2):
     """Look through the given folders (a few levels deep) for oximeter CSV exports (Wellue O2Ring and similar: a header
-    with a time column and an oxygen/SpO2 column) and SleepScope Health Shortcut files. Returns (oximeter_paths, health_paths)."""
+    with a time column and an oxygen/SpO2 column), SleepScope Health Shortcut files and Apple Health exports (export.zip or the
+    unzipped apple_health_export/export.xml). Returns (oximeter_paths, health_paths)."""
     ox, health = [], []
     seen = set()
     for folder in folders:
@@ -332,10 +333,20 @@ def find_companion_files(folders, max_depth=2):
         seen.add(folder); base_depth = folder.rstrip(os.sep).count(os.sep)
         for dirpath, dirnames, filenames in os.walk(folder):
             if dirpath.count(os.sep) - base_depth >= max_depth: dirnames[:] = []
-            dirnames[:] = [d for d in dirnames if not d.startswith('.') and d.lower() not in ('datalog', 'node_modules', 'appdata')]
+            dirnames[:] = [d for d in dirnames if not d.startswith('.') and d.lower() not in ('datalog', 'node_modules', 'appdata', '_to_delete', '_internal')]
+            if os.path.basename(dirpath).lower() == 'apple_health_export':        # unzipped Health export: take export.xml, skip its ECG csvs and routes
+                dirnames[:] = []
+                if 'export.xml' in filenames: health.append(os.path.join(dirpath, 'export.xml'))
+                continue
             for fn in filenames:
                 low = fn.lower()
                 path = os.path.join(dirpath, fn)
+                if low.endswith('.zip') and 'export' in low:                        # Health export.zip (export.zip, export (1).zip ...)
+                    try:
+                        with zipfile.ZipFile(path) as zz:
+                            if any(n.endswith('apple_health_export/export.xml') for n in zz.namelist()): health.append(path)
+                    except Exception: pass
+                    continue
                 if O2RING_RAW_NAME.match(fn):
                     if is_o2ring_raw(path): ox.append(path)
                     continue

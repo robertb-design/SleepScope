@@ -390,6 +390,8 @@ def night_stats(nt: Night) -> dict:
                  press_at_max_pct=np.nan, rr_med=sm['rr_med'], tv_med=sm['tv_med'], mv_med=sm['mv_med'], flowlim_95=np.nan, flowlim_minutes=np.nan,
                  periodic_windows=np.nan, summary_only=True)
     d['setting'] = getattr(nt, 'str_setting', None) or ('' if getattr(nt, 'summary_only', False) else pressure_label(d))
+    from .apple_health import watch_fields
+    d.update(watch_fields(nt))
     nt.stats = d
     return d
 
@@ -406,6 +408,8 @@ STAT_COLUMNS = [
     ('periodic_windows', 'Periodic', '{}'),
     ('spo2_mean', 'SpO2 mean', '{:.1f}'), ('spo2_min', 'SpO2 min', '{:.0f}'), ('spo2_pct_lt90', '% <90', '{:.1f}'), ('spo2_pct_lt88', '% <88', '{:.1f}'), ('ODI', 'ODI', '{:.1f}'),
     ('pulse_mean', 'Pulse', '{:.0f}'),
+    ('w_bd', 'Watch BD', '{:.1f}'), ('w_asleep', 'Watch asleep h', '{:.1f}'), ('w_cover', 'Mask on % of sleep', '{:.0f}'), ('w_deeprem', 'Deep+REM min', '{:.0f}'),
+    ('w_hrv', 'HRV ms', '{:.0f}'), ('w_rr', 'Watch RR', '{:.1f}'),
 ]
 _FMT = {k: f for k, _, f in STAT_COLUMNS}
 

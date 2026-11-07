@@ -167,7 +167,10 @@ def night(nt) -> str:
     if getattr(nt, 'apple', None) and nt.apple.get('stages'):
         a = nt.apple; found, imp = [], []
         found.append(f"Watch: asleep {a['asleep_h']:.1f} h, deep {a['deep_min']:.0f} min, REM {a['rem_min']:.0f} min, awake {a['awake_min']:.0f} min; machine on {nt.hours:.1f} h.")
-        if a['asleep_h'] > nt.hours + 0.5: imp.append(f"About {a['asleep_h'] - nt.hours:.1f} h of sleep had no mask on. That untreated sleep is the easiest gain available.")
+        if np.isfinite(a.get('cover_pct', np.nan)): found.append(f"Mask on for {a['cover_pct']:.0f}% of the Watch's sleep.")
+        if np.isfinite(a.get('bd', np.nan)): found.append(f"Watch Breathing Disturbances {a['bd']:.1f} per hour, against machine AHI {nt.stats.get('AHI', np.nan):.1f}.")
+        if np.isfinite(a.get('cover_pct', np.nan)) and a['cover_pct'] < 90: imp.append(f"About {(100 - a['cover_pct']) * a['asleep_h'] / 100:.1f} h of sleep had no mask on. That untreated sleep is the easiest gain available.")
+        elif a['asleep_h'] > nt.hours + 0.5 and not np.isfinite(a.get('cover_pct', np.nan)): imp.append(f"About {a['asleep_h'] - nt.hours:.1f} h of sleep had no mask on. That untreated sleep is the easiest gain available.")
         else: imp.append("The machine covered the sleep the Watch saw. Compare deep and REM minutes across nights with and without leak; treated sleep should show more of both.")
         out.append(_block('Apple Watch', "Sleep stages from the Watch (motion and heart rate, not EEG, so approximate), its heart rate, and its SpO2 spot checks.", found, imp))
     return "<div style='font-size:12.5px;line-height:1.4'>" + ''.join(out) + "</div>"
@@ -297,6 +300,10 @@ COLUMN_HELP = {
     'spo2_mean': 'Average blood oxygen. 94 or higher is normal.', 'spo2_min': 'Lowest oxygen reading. One brief low can be the sensor.',
     'spo2_pct_lt90': 'Share of the night under 90%. Near 0 is the goal.', 'spo2_pct_lt88': 'Share of the night under 88%. 5 minutes or more is a doctor conversation.',
     'ODI': 'Oxygen dips of 3 points or more per hour, sensor movement removed. Under 5 is normal.', 'pulse_mean': 'Average heart rate from the ring.',
+    'w_bd': 'Apple Watch Breathing Disturbances per hour, from wrist motion. A trend number, not an AHI; the machine AHI stays the reference.',
+    'w_asleep': 'Hours the Watch scored as asleep.', 'w_cover': 'Share of the Watch\'s sleep that happened with the mask on. 90 or more is the goal.',
+    'w_deeprem': 'Deep plus REM minutes from the Watch. Approximate (wrist motion and heart rate, not brain waves); watch the trend.',
+    'w_hrv': 'Heart rate variability overnight from the Watch. Higher than your own usual is better recovery.', 'w_rr': 'Breathing rate the Watch measured while asleep.',
 }
 
 

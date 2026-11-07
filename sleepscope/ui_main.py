@@ -41,8 +41,8 @@ class PhoneSyncWorker(QtCore.QThread):
     """Writes the card (last 45 nights of DATALOG, STR.edf, Identification) as one zip into a synced folder such as
     Dropbox\\SleepScope, so the phone app can open it without reading the SD card itself."""
     done = QtCore.Signal(str)
-    def __init__(self, root, datalog, folder, nights, ring_files=()):
-        super().__init__(); self.root, self.datalog, self.folder, self.nights, self.ring_files = root, datalog, folder, nights, list(ring_files)
+    def __init__(self, root, datalog, folder, nights, ring_files=(), health=None):
+        super().__init__(); self.root, self.datalog, self.folder, self.nights, self.ring_files, self.health = root, datalog, folder, nights, list(ring_files), health
     def run(self):
         import zipfile, datetime as _dt
         try:
@@ -65,8 +65,11 @@ class PhoneSyncWorker(QtCore.QThread):
                 for rp in self.ring_files:
                     try: z.write(rp, 'O2/' + os.path.basename(rp)); rings += 1
                     except OSError: pass
+                if self.health:                                        # Watch nights, trimmed to the card's window, for the phone
+                    import json as _json
+                    z.writestr('health.json', _json.dumps(apple_health.to_sync(self.health, self.nights[-45].date if len(self.nights) >= 45 else self.nights[0].date)))
             os.replace(tmp, out)
-            self.done.emit(f'Phone copy updated: {out} ({os.path.getsize(out) / 1e6:.0f} MB, {count} card files' + (f', {rings} ring files)' if rings else ')'))
+            self.done.emit(f'Phone copy updated: {out} ({os.path.getsize(out) / 1e6:.0f} MB, {count} card files' + (f', {rings} ring files' if rings else '') + (', Watch data' if self.health else '') + ')')
         except Exception as e:
             self.done.emit(f'Phone copy failed: {e}')
 
@@ -535,6 +538,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return [c for c in cands if c]
     def _auto_companions(self, root):
         """Find oximeter CSVs (and Health Shortcut files) near the card or in the companion folder and attach them to the loaded nights."""
+        self.apple_data = None
         try:
             ox_files, health_files = loader.find_companion_files(self.companion_folders(root))
         except Exception:
@@ -547,9 +551,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 n = 0
             if n: filled += n; used += 1
         hmatched = 0
+        exports = [p for p in health_files if not p.lower().endswith(('.txt', '.csv'))]
+        if exports:                                                    # newest Health export wins; parsed once per file version
+            p = max(exports, key=os.path.getmtime); key = (p, os.path.getmtime(p), self.nights[0].date)
+            try:
+                if getattr(self, '_health_cache', (None,))[0] != key:
+                    self.statusBar().showMessage('Reading Apple Health export…'); QtWidgets.QApplication.processEvents()
+                    self._health_cache = (key, apple_health.read_export(p, date_from=self.nights[0].date))
+                self.apple_data = self._health_cache[1]; hmatched = apple_health.attach(self.apple_data, self.nights)
+            except Exception:
+                pass
         for p in health_files:
+            if not p.lower().endswith(('.txt', '.csv')) or hmatched: continue
             try:
                 data = apple_health.read_shortcut_csv(p); hmatched = max(hmatched, apple_health.attach(data, self.nights))
+                if hmatched: self.apple_data = data
             except Exception:
                 pass
         if filled or hmatched:
@@ -616,7 +632,7 @@ class MainWindow(QtWidgets.QMainWindow):
             import time as _t
             ring = [p_ for p_ in loader.find_companion_files(self.companion_folders(self.data.get('root')))[0] if _t.time() - os.path.getmtime(p_) < 60 * 86400]
         except Exception: ring = []
-        self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights, ring)
+        self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights, ring, getattr(self, 'apple_data', None))
         self.sync_worker.done.connect(lambda msg: self.statusBar().showMessage(msg, 15000)); self.sync_worker.start()
     def set_phone_folder(self):
         cur = self.phone_folder() or os.path.expanduser('~')
@@ -651,11 +667,11 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if p.lower().endswith(('.txt', '.csv')): data = apple_health.read_shortcut_csv(p)
             else: data = apple_health.read_export(p, date_from=self.nights[0].date, progress=lambda n: (self.statusBar().showMessage(f'Reading Apple Health export: {n:,} records'), QtWidgets.QApplication.processEvents()))
-            n = apple_health.attach(data, self.nights)
+            n = apple_health.attach(data, self.nights); self.apple_data = data
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, 'Apple Health import', str(e)); return
-        self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights); self._refresh_home()
-        QtWidgets.QMessageBox.information(self, 'Apple Health import', f'{len(data["sleep"]):,} sleep records, {len(data["hr"]):,} heart rate samples, {len(data["spo2"]):,} SpO2 samples read.\nMatched to {n} of {len(self.nights)} nights.')
+        self._fill_stats(); self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights); self._refresh_home()
+        QtWidgets.QMessageBox.information(self, 'Apple Health import', f'{len(data["sleep"]):,} sleep records, {len(data.get("bd", [])):,} breathing disturbance nights, {len(data["hr"]):,} heart rate samples, {len(data["spo2"]):,} SpO2 samples read.\nMatched to {n} of {len(self.nights)} nights.\n\nTip: leave export.zip (or the unzipped export folder) in the Sleepscope folder and SleepScope picks it up by itself on every load.')
     def export_table(self, table, default):
         p, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save CSV', default, 'CSV (*.csv)')
         if p: table.to_csv(p); self.statusBar().showMessage('Saved ' + p)
