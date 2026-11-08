@@ -7,7 +7,7 @@ let nights = []; let history = []; let claudeBusy = false; let selectedNight = n
 const store = { get: (k, d) => { try { const v = localStorage.getItem('ss_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem('ss_' + k, JSON.stringify(v)); } catch (e) {} } };
 
 // ---------------------------------------------------------------- navigation
-function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); if (p === 'land' && nights.length) drawLandscape(); if (p === 'update') updateDay(); }
+function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); if (p === 'land' && nights.length) drawLandscape(); if (p === 'update') updateDay(); if (p === 'ask') refreshAskContext(); }
 function updateDay() { const sun = new Date().getDay() === 0; $('upsunday').style.display = sun ? '' : 'none'; $('upwatch').style.opacity = sun ? '1' : '0.55'; $('upwatchwhen').textContent = sun ? 'Sundays (today)' : 'Sundays (not today)'; }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => go(b.dataset.p));
 
@@ -54,6 +54,7 @@ async function loadFiles(files, label) {
   afterLoad();
 }
 function afterLoad() {
+  setTimeout(() => { try { refreshAskContext(); } catch (e) {} }, 0);
   const last = nights[nights.length - 1];
   $('hdrsub').textContent = `${nights.length} nights · last ${SS.label(last.date)} · AHI ${last.stats.AHI.toFixed(1)}`;
   $('st1').textContent = `✔ ${nights.length} nights`; $('st1').className = 'status ok'; $('st2').textContent = '✔ Ready'; $('st2').className = 'status ok'; $('st3').textContent = '✔ Ready'; $('st3').className = 'status ok';
@@ -278,7 +279,7 @@ function landView(v) { landCam = v; drawLandscape(); }
 const SYSTEM = `You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data. Give plain, direct, well-reasoned answers with no filler. Use the numbers in the CONTEXT block; do not invent data. Say when something is not in the data and what would answer it. Pressure settings are prescribed: discuss trade-offs and what to raise with the prescriber rather than instructing changes. Never use dashes in prose. Keep answers tight.`;
 function buildContext(a, b) {
   const sel = nights.filter(n => n.date >= a && n.date <= b); const diag = parseFloat($('diag').value) || null;
-  const syn = $('syntext').innerText; const cols = ['date', 'hours', 'mode', 'AHI', 'OA', 'CA', 'H', 'arousals', 'app_AHI', 'app_unflagged', 'press_min', 'press_med', 'press_95', 'press_max', 'press_at_max_pct', 'leak_med', 'leak_95', 'leak_pct_large', 'flowlim_95', 'flowlim_minutes', 'rr_med', 'tv_med', 'mv_med', 'spo2_mean', 'spo2_min', 'spo2_pct_lt90', 'ODI', 'w_bd', 'w_asleep', 'w_cover', 'w_deeprem', 'w_hrv'];
+  const syn = (SS.synopsis(nights, a, b, diag) + appleSection(a, b)).replace(/<\/(p|h3|h4|li|div)>/g, '\n').replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); const cols = ['date', 'hours', 'mode', 'AHI', 'OA', 'CA', 'H', 'arousals', 'app_AHI', 'app_unflagged', 'press_min', 'press_med', 'press_95', 'press_max', 'press_at_max_pct', 'leak_med', 'leak_95', 'leak_pct_large', 'flowlim_95', 'flowlim_minutes', 'rr_med', 'tv_med', 'mv_med', 'spo2_mean', 'spo2_min', 'spo2_pct_lt90', 'ODI', 'w_bd', 'w_asleep', 'w_cover', 'w_deeprem', 'w_hrv'];
   const fmt = (v) => typeof v === 'number' ? (Number.isFinite(v) ? +v.toFixed(2) : '') : v;
   const table = [cols.join('\t'), ...sel.map(n => cols.map(c => fmt(n.stats[c])).join('\t'))].join('\n');
   const evs = []; for (const n of sel) for (const s of n.sessions) for (const e of [...s.machine, ...s.app].sort((x, y) => x.start - y.start)) { if (e.label === 'Flow Limitation Run') continue; const i2 = Math.max(0, Math.floor((e.start - s.start) / 2000)); const pr = s.ch.Press, lk = s.ch.Leak; evs.push(`${SS.label(n.date)} ${SS.fmtTime(e.start)} ${e.label} [${e.source}] ${e.dur.toFixed(0)}s P=${pr ? pr[Math.min(i2, pr.length - 1)].toFixed(1) : '?'} leak=${lk ? (lk[Math.min(i2, lk.length - 1)] * 60).toFixed(0) : '?'} ${e.detail}`); }
@@ -315,8 +316,40 @@ function md(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/
 function saveAnswer(q, a) { const list = store.get('answers', []); list.unshift({ when: new Date().toISOString(), q, a }); store.set('answers', list.slice(0, 200)); }
 function showSaved() { const box = $('savedbox'); box.style.display = box.style.display === 'none' ? 'block' : 'none'; const list = store.get('answers', []); $('savedlist').innerHTML = list.length ? list.map(x => `<div class="q">${new Date(x.when).toLocaleString()} · ${x.q.replace(/</g, '&lt;')}</div><div class="a">${md(x.a)}</div>`).join('') : '<p class="muted">Nothing saved yet.</p>'; }
 $('savedbtn').onclick = showSaved; $('newconv').onclick = () => { history = []; $('chat').innerHTML = '<p class="muted">New conversation. Your next question carries the current data range.</p>'; };
+const QUICK = ['Are my pressure settings OK?', 'Should I change my pressure settings? If so, to what?', 'How did last night go?', 'Am I improving? Compare the nights.', 'Is my mask leak a problem?', 'What does my oxygen data show?', 'Do the Watch and the machine agree?', 'What should I change first?', 'Write a summary for my doctor.'];
+function askRange() {
+  if (!nights.length) return ['', '']; const v = $('askrange').value; const last = nights[nights.length - 1].date;
+  if (v === 'syn') { let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a]; return [a, b]; }
+  if (v === 'all') return [nights[0].date, last];
+  const d = new Date(last + 'T12:00'); d.setDate(d.getDate() - (parseInt(v) - 1)); const a = d.toISOString().slice(0, 10); return [a < nights[0].date ? nights[0].date : a, last];
+}
+/** Plain summary of what goes to Claude with each question (same wording as the desktop). */
+function refreshAskContext() {
+  const el = $('askctx'); if (!el) return;
+  if (!nights.length) { el.innerHTML = '<b>What Claude sees with each question:</b> nothing yet. Load your card zip on the Start page first.'; return; }
+  const [a, b] = askRange(); const sel = nights.filter(n => n.date >= a && n.date <= b);
+  if (!sel.length) { el.innerHTML = '<b>What Claude sees with each question:</b> no nights in this range.'; return; }
+  const g = (k) => sel.map(n => n.stats[k]).filter(v => typeof v === 'number' && Number.isFinite(v)); const mean = (v) => v.reduce((x, y) => x + y, 0) / v.length;
+  const med = (v) => { const s2 = [...v].sort((x, y) => x - y), m = s2.length >> 1; return s2.length % 2 ? s2[m] : (s2[m - 1] + s2[m]) / 2; };
+  const lab = (d) => new Date(d + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: '2-digit', day: '2-digit' }).replace(',', '');
+  const ahi = g('AHI'), p95 = g('press_95'), lk = g('leak_95'); const sets = [...new Set(sel.map(n => SS.pressureLabel(n.stats)).filter(Boolean))].sort();
+  const ring = sel.filter(n => Number.isFinite(n.stats.spo2_mean)).length, watch = sel.filter(n => n.apple).length; const about = $('about').value.trim();
+  const out = [`${sel.length} night${sel.length !== 1 ? 's' : ''}, ${lab(sel[0].date)} to ${lab(sel[sel.length - 1].date)}.`];
+  if (ahi.length) out.push(`Machine AHI ${Math.min(...ahi).toFixed(1)} to ${Math.max(...ahi).toFixed(1)}, average ${mean(ahi).toFixed(1)}.`);
+  if (sets.length) out.push('Pressure setting ' + sets.join(', ') + '.');
+  if (p95.length) out.push(`Pressure 95th percentile ${mean(p95).toFixed(1)} cmH2O on average.`);
+  if (lk.length) out.push(`Leak 95th percentile ${med(lk).toFixed(1)} L/min (median night).`);
+  out.push(`Ring oxygen on ${ring} night${ring !== 1 ? 's' : ''}, Watch sleep on ${watch}.`);
+  out.push(about ? `About me: ${about.replace(/\.$/, '')}.` : 'About me: empty. Add a line (age, diagnosis AHI, mask, what you want) for better answers.');
+  out.push("Also sent: the synopsis, every night's numbers, the event list and the oxygen timeline.");
+  el.innerHTML = '<b>What Claude sees with each question:</b> ' + out.join(' ').replace(/</g, '&lt;');
+}
+$('askchips').innerHTML = QUICK.map((q, i) => `<button class="ghost" data-q="${i}" style="flex:0 1 auto;width:auto;max-width:100%;white-space:normal;text-align:left;padding:6px 10px;font-size:14px">${q}</button>`).join('');
+$('askchips').onclick = (e) => { const b = e.target.closest('button[data-q]'); if (!b || $('sendbtn').disabled) return; $('q').value = QUICK[+b.dataset.q]; $('sendbtn').click(); };
+$('askrange').value = store.get('askrange', '30'); $('askrange').onchange = () => { store.set('askrange', $('askrange').value); refreshAskContext(); };
+$('about').addEventListener('input', refreshAskContext);
 $('sendbtn').onclick = async () => {
-  const q = $('q').value.trim(); if (!q) return; if (!nights.length) { $('askstatus').textContent = 'Load data first.'; return; } let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a];
+  const q = $('q').value.trim(); if (!q) return; if (!nights.length) { $('askstatus').textContent = 'Load data first.'; return; } if (!$('apikey').value.trim()) { $('askstatus').textContent = 'Enter your API key above first.'; return; } const [a, b] = askRange();
   if (!history.length) history.push({ role: 'user', content: buildContext(a, b) + '\n\nQUESTION: ' + q }); else history.push({ role: 'user', content: q });
   const chat = $('chat'); chat.insertAdjacentHTML('beforeend', `<div class="q">You</div><div class="a">${q.replace(/</g, '&lt;')}</div>`); $('q').value = ''; $('sendbtn').disabled = true; $('askstatus').textContent = 'Waiting for Claude… (a long answer can take 30 to 60 s)'; chat.scrollTop = chat.scrollHeight;
   try { const text = await callClaude(history, sysWithAbout()); history.push({ role: 'assistant', content: text }); chat.insertAdjacentHTML('beforeend', `<div class="q" style="color:${C.orange}">Claude</div><div class="a">${md(text)}</div>`); saveAnswer(q, text); $('askstatus').textContent = 'Saved on this phone.'; }

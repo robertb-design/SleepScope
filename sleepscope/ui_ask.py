@@ -57,6 +57,40 @@ def build_context(nights, start, end, diag_ahi=None):
               f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter timeline section is present above; when it is, use it to say which events cost oxygen and which dips look like sensor artifact.")
 
 
+QUICK_QUESTIONS = [
+    'Are my pressure settings OK?',
+    'Should I change my pressure settings? If so, to what?',
+    'How did last night go?',
+    'Am I improving? Compare the nights.',
+    'Is my mask leak a problem?',
+    'What does my oxygen data show?',
+    'Do the Watch and the machine agree?',
+    'What should I change first?',
+    'Write a summary for my doctor.',
+]
+
+
+def context_summary(nights, start, end, about=''):
+    """Plain summary of what goes to Claude with each question (same wording as the phone)."""
+    import numpy as np
+    sel = [n for n in nights if start <= n.date <= end]
+    if not sel: return 'No nights in this range. Load a card or widen the range.'
+    g = lambda k: [n.stats.get(k, np.nan) for n in sel if isinstance(n.stats.get(k, np.nan), (int, float)) and np.isfinite(n.stats.get(k, np.nan))]
+    ahi = g('AHI'); p95 = g('press_95'); lk = g('leak_95')
+    sets = sorted({n.stats.get('setting') for n in sel if n.stats.get('setting')})
+    ring = sum(1 for n in sel if np.isfinite(n.stats.get('spo2_mean', np.nan)))
+    watch = sum(1 for n in sel if getattr(n, 'apple', None))
+    out = [f"{len(sel)} night{'s' if len(sel) != 1 else ''}, {sel[0].date:%a %m/%d} to {sel[-1].date:%a %m/%d}."]
+    if ahi: out.append(f"Machine AHI {min(ahi):.1f} to {max(ahi):.1f}, average {np.mean(ahi):.1f}.")
+    if sets: out.append('Pressure setting ' + ', '.join(sets) + '.')
+    if p95: out.append(f"Pressure 95th percentile {np.mean(p95):.1f} cmH2O on average.")
+    if lk: out.append(f"Leak 95th percentile {np.median(lk):.1f} L/min (median night).")
+    out.append(f"Ring oxygen on {ring} night{'s' if ring != 1 else ''}, Watch sleep on {watch}.")
+    out.append(f"About me: {about.rstrip('.')}." if about else 'About me: empty. Add a line (age, diagnosis AHI, mask, what you want) for better answers.')
+    out.append('Also sent: the synopsis, every night\'s numbers, the event list and the oxygen timeline.')
+    return ' '.join(out)
+
+
 class AskWorker(QtCore.QThread):
     done = QtCore.Signal(str); failed = QtCore.Signal(str)
     def __init__(self, key, model, system, messages):
@@ -142,6 +176,13 @@ class AskView(QtWidgets.QWidget):
         self.earlier.activated.connect(self._pick_earlier); row2.addWidget(self.earlier)
         op = QtWidgets.QPushButton('Open folder'); op.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(self._ensure_folder() or '.'))); row2.addWidget(op)
         self.card_root = None
+        self.ctx = QtWidgets.QLabel(''); self.ctx.setWordWrap(True); self.ctx.setTextFormat(QtCore.Qt.RichText)
+        self.ctx.setStyleSheet('background:#eef4fb; border:1px solid #c9d8ee; border-radius:6px; padding:8px; color:#1d1d1b'); lay.addWidget(self.ctx)
+        qrow = QtWidgets.QGridLayout(); qrow.setHorizontalSpacing(6); qrow.setVerticalSpacing(4); lay.addLayout(qrow)
+        for i, q in enumerate(QUICK_QUESTIONS):
+            b = QtWidgets.QPushButton(q); b.setToolTip('Sends this question now'); b.setStyleSheet('text-align:left; padding:4px 8px')
+            b.clicked.connect(lambda _=False, q=q: self.quick(q)); qrow.addWidget(b, i // 3, i % 3)
+        self.d0.dateChanged.connect(self.refresh_context); self.d1.dateChanged.connect(self.refresh_context); self.about.textChanged.connect(self.refresh_context)
         self.view = QtWidgets.QTextBrowser(); self.view.setOpenExternalLinks(True); self.view.setStyleSheet('font-size:13px; padding:6px'); lay.addWidget(self.view, 1)
         bottom = QtWidgets.QHBoxLayout(); lay.addLayout(bottom)
         self.input = QtWidgets.QPlainTextEdit(); self.input.setFixedHeight(70); self.input.setPlaceholderText('Ask about the results in the selected range. Ctrl+Enter to send.')
@@ -149,20 +190,31 @@ class AskView(QtWidgets.QWidget):
         self.send = QtWidgets.QPushButton('Send'); self.send.setFixedWidth(90); self.send.clicked.connect(self.ask); bottom.addWidget(self.send)
         self.status = QtWidgets.QLabel(''); self.status.setStyleSheet('color:#52514e'); lay.addWidget(self.status)
         self.timer = QtCore.QTimer(self); self.timer.setInterval(1000); self.timer.timeout.connect(self._tick); self._t0 = None
-        self.intro()
+        self.intro(); self.refresh_context()
+
+    def refresh_context(self, *_):
+        if not self.nights:
+            self.ctx.setText('<b>What Claude sees with each question:</b> nothing yet. Open an SD card first.'); return
+        a, b = self.d0.date().toPython(), self.d1.date().toPython()
+        if a > b: a, b = b, a
+        self.ctx.setText('<b>What Claude sees with each question:</b> ' + html.escape(context_summary(self.nights, a, b, self.about.text().strip())))
+
+    def quick(self, q):
+        if self.worker and self.worker.isRunning(): return
+        self.input.setPlainText(q); self.ask()
 
     def intro(self):
         self.view.setHtml("""<p><b>Ask Claude about your data.</b> Each question goes to the Claude API together with the synopsis, the per-night statistics and the event list for the selected range,
         so the answer is grounded in your numbers.</p>
         <p>You need an API key: create one at <a href='https://console.anthropic.com/'>console.anthropic.com</a> (API keys). It is billed per use, separately from a claude.ai subscription;
         a question with a month of context costs a few cents. The key is saved on this PC only. Nothing is sent until you press Send.</p>
-        <p>Suggested questions: <i>What should I change first?</i> &nbsp; <i>Is the leak on 10/28 the mask or my mouth?</i> &nbsp; <i>Do the central apneas worry you?</i> &nbsp;
-        <i>Write a summary I can give my sleep doctor.</i> &nbsp; <i>Compare the nights under different settings.</i></p>""")
+        <p>Click a question above to send it, or type your own below.</p>""")
 
     def set_nights(self, nights):
         self.nights = nights
         if not nights: return
         self.d0.setDate(QtCore.QDate(max(nights[0].date, nights[-1].date - dt.timedelta(days=29)))); self.d1.setDate(QtCore.QDate(nights[-1].date))
+        self.refresh_context()
 
     def eventFilter(self, obj, ev):
         if obj is self.input and ev.type() == QtCore.QEvent.KeyPress and ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and ev.modifiers() & QtCore.Qt.ControlModifier:
