@@ -75,6 +75,9 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
   with most stage detail wins), HeartRate, OxygenSaturation (fraction), RespiratoryRate, HeartRateVariabilitySDNN, and
   `HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances` (one record per Watch night, spanning the sleep, value is a
   per hour rate although the unit says count). Verified on Robert's Ultra 2 export.
+- About me: kept in `About me.txt` in the user's Sleepscope folder (their Dropbox, never the repo). The desktop takes it
+  when its own field is empty or still holds the last copy it took, writes edits back, and packs it as `about.txt` in
+  `SleepScope card.zip`; the phone takes `about.txt` by the same rule.
 - Watch data reaches the phone as `health.json` inside `SleepScope card.zip` (desktop `apple_health.to_sync`, phone
   `AH.fromSync`), trimmed to the card's nights.
 

@@ -168,10 +168,16 @@ class AskView(QtWidgets.QWidget):
         self.card_btn = QtWidgets.QPushButton('Use SD card'); self.card_btn.setToolTip('Save into a SleepScope_Notes folder on the card. The machine ignores folders it does not know, but keep the card clean if ResMed support ever asks for it.')
         self.card_btn.clicked.connect(self.use_card); row2.addWidget(self.card_btn)
         sv = QtWidgets.QPushButton('Save conversation…'); sv.clicked.connect(self.save_conversation); row2.addWidget(sv)
-        row3 = QtWidgets.QHBoxLayout(); lay.addLayout(row3)
-        row3.addWidget(QtWidgets.QLabel('About me (optional, sent with each question, stored on this PC only)'))
-        self.about = QtWidgets.QLineEdit(SETTINGS.value('about_me', '')); self.about.setPlaceholderText('e.g. 71, engineer, diagnosed 2024, diagnostic AHI 35, want direct answers')
-        self.about.editingFinished.connect(lambda: SETTINGS.setValue('about_me', self.about.text().strip())); row3.addWidget(self.about, 1)
+        # About me: its own section at the top, multi line, kept in step with 'About me.txt' in the Sleepscope folder
+        abox = QtWidgets.QFrame(); abox.setStyleSheet('QFrame { background:#fff7ed; border:1px solid #f3c9a8; border-radius:6px; }')
+        al = QtWidgets.QVBoxLayout(abox); al.setContentsMargins(8, 6, 8, 6); al.setSpacing(3)
+        lab = QtWidgets.QLabel('<b>About me</b> <span style="color:#52514e">sent with every question so answers fit you. Stored on this PC and in About me.txt in your Sleepscope folder, which also fills in the phone.</span>')
+        lab.setWordWrap(True); lab.setStyleSheet('border:none; background:transparent'); al.addWidget(lab)
+        self.about = QtWidgets.QPlainTextEdit(SETTINGS.value('about_me', '')); self.about.setFixedHeight(62); self.about.setStyleSheet('background:white')
+        self.about.setPlaceholderText('Age, how you were diagnosed and the AHI, machine and pressure setting, mask, what devices you wear, how you want answers.')
+        al.addWidget(self.about); lay.insertWidget(0, abox)
+        self._about_timer = QtCore.QTimer(self); self._about_timer.setSingleShot(True); self._about_timer.setInterval(800); self._about_timer.timeout.connect(self._save_about)
+        self.about.textChanged.connect(self._about_timer.start); self.profile_folder = None
         row2.addWidget(QtWidgets.QLabel('Earlier:')); self.earlier = QtWidgets.QComboBox(); self.earlier.setMinimumWidth(260)
         self.earlier.activated.connect(self._pick_earlier); row2.addWidget(self.earlier)
         op = QtWidgets.QPushButton('Open folder'); op.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(self._ensure_folder() or '.'))); row2.addWidget(op)
@@ -197,7 +203,36 @@ class AskView(QtWidgets.QWidget):
             self.ctx.setText('<b>What Claude sees with each question:</b> nothing yet. Open an SD card first.'); return
         a, b = self.d0.date().toPython(), self.d1.date().toPython()
         if a > b: a, b = b, a
-        self.ctx.setText('<b>What Claude sees with each question:</b> ' + html.escape(context_summary(self.nights, a, b, self.about.text().strip())))
+        self.ctx.setText('<b>What Claude sees with each question:</b> ' + html.escape(context_summary(self.nights, a, b, self.about_text())))
+
+    def about_text(self):
+        return ' '.join(self.about.toPlainText().split())
+
+    ABOUT_FILE = 'About me.txt'
+    def set_profile_folder(self, folder):
+        """Take About me.txt from the Sleepscope folder when this PC has nothing, or still has the last copy it took from the file."""
+        self.profile_folder = folder if folder and os.path.isdir(folder) else None
+        if not self.profile_folder: return
+        f = os.path.join(self.profile_folder, self.ABOUT_FILE)
+        try:
+            txt = open(f, encoding='utf-8-sig').read().strip() if os.path.isfile(f) else ''
+        except OSError:
+            txt = ''
+        cur = self.about.toPlainText().strip()
+        if txt and txt != cur and (not cur or cur == SETTINGS.value('about_file_last', '')):
+            self.about.blockSignals(True); self.about.setPlainText(txt); self.about.blockSignals(False)
+            SETTINGS.setValue('about_me', txt); SETTINGS.setValue('about_file_last', txt); self.refresh_context()
+        elif cur and not txt:
+            self._save_about()                                        # first run: write the PC copy out for the phone
+
+    def _save_about(self):
+        txt = self.about.toPlainText().strip(); SETTINGS.setValue('about_me', txt)
+        if self.profile_folder:
+            try:
+                with open(os.path.join(self.profile_folder, self.ABOUT_FILE), 'w', encoding='utf-8') as f: f.write(txt + '\n')
+                SETTINGS.setValue('about_file_last', txt)
+            except OSError:
+                pass
 
     def quick(self, q):
         if self.worker and self.worker.isRunning(): return
@@ -341,7 +376,7 @@ class AskView(QtWidgets.QWidget):
         if self._t0: self.status.setText(f'Waiting for Claude... {int((dt.datetime.now() - self._t0).total_seconds())} s  (a long answer can take 30 to 60 s)')
     def _start_worker(self, messages, msg):
         self._t0 = dt.datetime.now(); self.timer.start(); self.send.setEnabled(False); self.status.setText(msg)
-        sysmsg = SYSTEM + (f'\nAbout the user, in their words: {self.about.text().strip()}\n' if self.about.text().strip() else '')
+        sysmsg = SYSTEM + (f'\nAbout the user, in their words: {self.about_text()}\n' if self.about_text() else '')
         self.worker = AskWorker(self.key.text().strip(), self.model.text().strip() or DEFAULT_MODEL, sysmsg, messages)
         self.worker.done.connect(self._answer); self.worker.failed.connect(self._fail); self.worker.start()
     def test_connection(self):

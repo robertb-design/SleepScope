@@ -66,6 +66,8 @@ class PhoneSyncWorker(QtCore.QThread):
                 for rp in self.ring_files:
                     try: z.write(rp, 'O2/' + os.path.basename(rp)); rings += 1
                     except OSError: pass
+                about = (SETTINGS.value('about_me', '') or '').strip()
+                if about: z.writestr('about.txt', about)                 # About me for the phone's Ask Claude
                 if self.health:                                        # Watch nights, trimmed to the card's window, for the phone
                     import json as _json
                     z.writestr('health.json', _json.dumps(apple_health.to_sync(self.health, self.nights[-45].date if len(self.nights) >= 45 else self.nights[0].date)))
@@ -453,7 +455,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
         self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
         scoring.apply_str_settings(self.nights, self.night_view.str_data)
-        self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
+        self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.ask.set_profile_folder(self.phone_folder()); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
         if self.nights: self._auto_companions(data.get('root'))
         if self.nights: self._phone_sync()
         if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self._show_tab(self.synopsis)

@@ -138,9 +138,11 @@
 
 <section class="page" id="p-ask">
   <div class="banner" style="--c:#eb6834;--c2:#a63d14"><h2>Ask Claude</h2><p>Questions answered from your numbers. Saved on this phone.</p></div>
+  <div class="card" style="border:1px solid #f3c9a8;background:#fff7ed"><b>About me</b> <span class="muted">sent with every question so answers fit you. Fills in from the PC through the card zip; edit it here any time.</span>
+    <textarea id="about" rows="4" style="margin-top:6px" placeholder="Age, how you were diagnosed and the AHI, machine and pressure setting, mask, what devices you wear, how you want answers."></textarea></div>
   <div class="card"><label class="f">API key (from console.anthropic.com, starts with sk-ant-)</label><input type="password" id="apikey" placeholder="sk-ant-...">
     <div class="row"><div><label class="f">Model</label><input type="text" id="model" value="claude-sonnet-5-5"></div><div><label class="f">&nbsp;</label><button class="ghost" id="testbtn">Test connection</button></div></div>
-    <label class="f">About me (optional, sent with each question)</label><input type="text" id="about" placeholder="e.g. 71, engineer, diagnosed 2024, diagnostic AHI 35, want direct answers"><div class="muted" id="teststatus"></div></div>
+    <div class="muted" id="teststatus"></div></div>
   <div class="card" id="askctxcard"><div class="row" style="align-items:flex-end"><div><label class="f">Nights sent with each question</label><select id="askrange"><option value="7">Last 7 nights</option><option value="30" selected>Last 30 nights</option><option value="all">All loaded nights</option><option value="syn">Same as Synopsis</option></select></div></div>
     <div id="askctx" class="muted" style="margin-top:8px;line-height:1.5"></div>
     <label class="f" style="margin-top:10px">Tap a question to send it</label><div id="askchips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div></div>
