@@ -21,6 +21,11 @@ Two programs share the same scoring rules and must stay in step (parity is a har
   `SleepScope-Setup.exe` (per user install, desktop icon, Installed apps entry) and a portable zip.
 - Every push also runs `pages.yml`, which looks up the build.yml run number for the same commit, stamps
   `docs/version.js` with the same 1.0.N, and deploys the phone app. Both apps show the version in their header.
+- Both apps check for a new version every time they open. Desktop: `updater.py` asks the GitHub releases API on start
+  (and from the Check for updates button), offers Install now / Later / Skip, downloads SleepScope-Setup.exe and runs it
+  with /SILENT /CLOSEAPPLICATIONS; the installer restarts the app (`Check: WizardSilent`). Phone: the service worker
+  is registered with updateViaCache none, checked on every open and on return to the front, and the page reloads
+  once when a new worker takes over; sw.js fetches with cache no-cache.
 - When you change phone files, bump the cache name in `docs/sw.js` (`sleepscope-vNN`) or phones keep the old copy.
 - Latest installer: https://github.com/robertb-design/SleepScope/releases/latest
 
@@ -41,7 +46,7 @@ Desktop (`sleepscope/`):
 - `ui_main.py`: main window, toolbar, load worker, phone copy worker (writes `SleepScope card.zip` to the
   Dropbox Sleepscope folder), tables, tabs. `ui_night.py` (per night panels), `ui_landscape.py` (3D),
   `ui_ask.py` (Ask Claude, Anthropic Messages API), `ui_notes.py`, `ui_home.py`, `ui_help.py` (How to use),
-  `branding.py` (logo, banners, About box), `theme.py`, `apple_health.py`, `sample_data.py`.
+  `branding.py` (logo, banners, About box), `updater.py` (update check and install), `theme.py`, `apple_health.py`, `sample_data.py`.
 
 Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js` (port of explain.py),
 `app.js` (UI, file intake, IndexedDB persistence, Plotly charts, 3D, Claude), `apple.js` (Health import),
