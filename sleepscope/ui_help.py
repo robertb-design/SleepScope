@@ -83,7 +83,7 @@ HELP = """
 <ol>
 <li>Each morning (or each week): card out, into the PC, click <b>Reload</b> (or Open SD card if it is a different folder), read the Synopsis, card back in the machine.</li>
 <li>Copy the whole card to a folder on the PC every month or so (for example Documents\\CPAP\\2026-10). Cards fail and get reformatted; the copy is your history.</li>
-<li>Updates: each time SleepScope opens it checks for a newer version and offers to install it. Click <b>Install now</b>; it closes, updates and opens again, keeping your settings, key and saved answers. <b>Check for updates</b> in the toolbar does the same on demand. The phone app updates itself when opened.</li>
+<li>Updates: each time SleepScope opens it checks for a newer version and, if there is one, installs it by itself: a progress bar shows for a few seconds, then it closes, updates and opens again, keeping your settings, key and saved answers. Press <b>Cancel</b> on the progress bar to skip it until the next start. <b>Check for updates</b> in the toolbar does the same on demand. The portable zip version asks instead, since it is not installed. The phone app updates itself when opened.</li>
 </ol>
 
 <h2>The numbers that matter, in plain words</h2>

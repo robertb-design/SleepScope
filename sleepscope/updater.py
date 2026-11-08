@@ -1,8 +1,11 @@
-"""Update check: on every start the app asks GitHub for the newest release and offers to install it.
+"""Automatic update: on every start the app asks GitHub for the newest release and, when there is a newer one,
+installs it without asking.
 
-Uses the public releases API (no account, no key). Nothing is sent but the request itself. When the user accepts,
-SleepScope-Setup.exe is downloaded to the temp folder and run silently; the installer closes this copy, installs
-over it (settings, key and saved answers are kept) and starts the new version.
+Uses the public releases API (no account, no key). Nothing is sent but the request itself. SleepScope-Setup.exe is
+downloaded to the temp folder (progress shown, Cancel skips it for this session) and run silently; the installer
+closes this copy, installs over it (settings, key and saved answers are kept) and starts the new version.
+Falls back to asking when the copy is portable (no uninstaller beside the exe, so the installer would put a second
+copy elsewhere) or when two automatic attempts at the same version have not taken.
 """
 from __future__ import annotations
 import json, os, re, sys, tempfile, subprocess, urllib.request
@@ -60,6 +63,10 @@ class Updater(QtCore.QObject):
     def __init__(self, window, settings):
         super().__init__(window); self.w, self.settings = window, settings; self.worker = None; self.quiet = True
 
+    def installed(self):
+        """True for a copy put there by the installer (Inno Setup leaves unins000.exe beside the exe)."""
+        return getattr(sys, 'frozen', False) and os.path.exists(os.path.join(os.path.dirname(sys.executable), 'unins000.exe'))
+
     def current(self):
         from . import version as _v
         return _v.VERSION
@@ -83,6 +90,14 @@ class Updater(QtCore.QObject):
             if not self.quiet: QtWidgets.QMessageBox.information(self.w, 'Updates', f'You have the newest version, {cur}.')
             else: self.w.statusBar().showMessage(f'SleepScope {cur} is the newest version.', 6000)
             return
+        if not url:
+            if not self.quiet: import webbrowser; webbrowser.open(page)
+            return
+        if self.installed():
+            tries = int(self.settings.value('auto_update_tries', 0) or 0) if self.settings.value('auto_update_ver', '') == ver else 0
+            if tries < 2 or not self.quiet:
+                self.settings.setValue('auto_update_ver', ver); self.settings.setValue('auto_update_tries', tries + 1)
+                self._download(url, ver); return
         if self.quiet and self.settings.value('skip_version', '') == ver: return
         box = QtWidgets.QMessageBox(self.w); box.setWindowTitle('Update available'); box.setIcon(QtWidgets.QMessageBox.Information)
         box.setText(f'SleepScope {ver} is available. You have {cur}.')
@@ -98,11 +113,12 @@ class Updater(QtCore.QObject):
         self._download(url, ver)
 
     def _download(self, url, ver):
-        dlg = QtWidgets.QProgressDialog(f'Downloading SleepScope {ver}…', 'Cancel', 0, 100, self.w)
+        dlg = QtWidgets.QProgressDialog(f'Updating to SleepScope {ver}. It reopens by itself when done.', 'Cancel', 0, 100, self.w)
         dlg.setWindowTitle('Update'); dlg.setWindowModality(QtCore.Qt.WindowModal); dlg.setMinimumDuration(0); dlg.setValue(0)
         self.dl = DownloadWorker(url, ver)
         self.dl.progress.connect(lambda got, tot: dlg.setValue(int(100 * got / tot)) if tot else None)
-        self.dl.failed.connect(lambda msg: (dlg.close(), QtWidgets.QMessageBox.warning(self.w, 'Update', f'The download failed: {msg}\n\nGet it from {API.replace("api.github.com/repos", "github.com")}')))
+        self.dl.failed.connect(lambda msg: (dlg.close(), self.w.statusBar().showMessage(f'Update to {ver} failed ({msg}); it is tried again next start.', 15000) if self.quiet
+                                            else QtWidgets.QMessageBox.warning(self.w, 'Update', f'The download failed: {msg}\n\nGet it from https://github.com/{REPO}/releases/latest')))
         self.dl.done.connect(lambda path: (dlg.close(), self._install(path)))
         dlg.canceled.connect(self.dl.terminate)
         self.dl.start()

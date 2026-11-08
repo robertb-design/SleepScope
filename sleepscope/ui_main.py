@@ -359,7 +359,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.data = None; self.nights = []
         tb = self.addToolBar('Main'); tb.setMovable(False); tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         from .updater import Updater
-        self.updater = Updater(self, SETTINGS); QtCore.QTimer.singleShot(2500, lambda: self.updater.check(quiet=True))   # every start
+        self.updater = Updater(self, SETTINGS); QtCore.QTimer.singleShot(800, lambda: self.updater.check(quiet=True))   # every start
         tb.addWidget(LogoWidget(30))
         from . import version as _ver
         vtxt = 'from source' if _ver.VERSION == 'source' else 'v' + _ver.VERSION

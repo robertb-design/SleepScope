@@ -22,7 +22,9 @@ Two programs share the same scoring rules and must stay in step (parity is a har
 - Every push also runs `pages.yml`, which looks up the build.yml run number for the same commit, stamps
   `docs/version.js` with the same 1.0.N, and deploys the phone app. Both apps show the version in their header.
 - Both apps check for a new version every time they open. Desktop: `updater.py` asks the GitHub releases API on start
-  (and from the Check for updates button), offers Install now / Later / Skip, downloads SleepScope-Setup.exe and runs it
+  (and from the Check for updates button) and, for an installed copy, updates without asking (Cancel on the progress bar skips
+  it for that session; after two attempts at the same version that did not take, or for the portable copy, it falls back to
+  Install now / Later / Skip), downloads SleepScope-Setup.exe and runs it
   with /SILENT /CLOSEAPPLICATIONS; the installer restarts the app (`Check: WizardSilent`). Phone: the service worker
   is registered with updateViaCache none, checked on every open and on return to the front, and the page reloads
   once when a new worker takes over; sw.js fetches with cache no-cache.
