@@ -104,7 +104,8 @@ function renderSynopsis() {
 ['d0', 'd1', 'diag'].forEach(id => $(id).onchange = renderSynopsis);
 
 function appleSection(a, b) {
-  const ah = nights.filter(n => n.date >= a && n.date <= b && n.apple); if (!ah.length) return '';
+  const ah = nights.filter(n => n.date >= a && n.date <= b && n.apple); const wAll = nights.filter(n => n.apple);
+  if (!ah.length) return wAll.length ? `<h3>Apple Watch</h3><p>No Watch sleep on the nights shown. The last night with Watch data is ${new Date(wAll[wAll.length - 1].date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: '2-digit', day: '2-digit' }).replace(',', '')}; set the range to include it, or tap it in Nights. Wear the Watch to bed with Sleep tracking on and the next export fills these nights in.</p>` : '';
   const m = (k) => { const v = ah.map(n => n.apple[k]).filter(Number.isFinite); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : NaN; };
   const mn = (k) => { const v = ah.map(n => n.apple[k]).filter(Number.isFinite); return v.length ? Math.min(...v) : NaN; };
   const stN = ah.filter(n => Number.isFinite(n.apple.asleep_h)).length; let t = '<h3>Apple Watch</h3>';

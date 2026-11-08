@@ -177,6 +177,11 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
 
     # ---- apple health
     ah = [n for n in sel if getattr(n, 'apple', None)]
+    w_all = [n for n in nights if getattr(n, 'apple', None)]
+    if not ah and w_all:
+        h2('Apple Watch')
+        p(f'No Watch sleep on the nights shown. The last night with Watch data is {w_all[-1].date:%a %m/%d}; set the range to include it, or open it in the Night tab. '
+          'Wear the Watch to bed with Sleep tracking on and the next export fills these nights in.')
     if ah:
         h2('Apple Watch')
         asleep = np.array([n.apple.get('asleep_h', np.nan) for n in ah]); deep = np.array([n.apple.get('deep_min', np.nan) for n in ah]); rem = np.array([n.apple.get('rem_min', np.nan) for n in ah])
