@@ -47,7 +47,8 @@ Desktop (`sleepscope/`):
   (`OVERVIEW_CAPTIONS`, `NIGHT_CAPTIONS`), column help (`COLUMN_HELP`), click explanations in 3D (`point`).
 - `ui_main.py`: main window, toolbar, load worker, phone copy worker (writes `SleepScope card.zip` to the
   Dropbox Sleepscope folder), tables, tabs. `ui_night.py` (per night panels), `ui_landscape.py` (3D),
-  `ui_ask.py` (Ask Claude, Anthropic Messages API), `ui_notes.py`, `ui_home.py`, `ui_help.py` (How to use),
+  `ui_ask.py` (Ask Claude, Anthropic Messages API; `QUICK_QUESTIONS` one click questions and `context_summary`,
+  the "What Claude sees" box, mirrored by `QUICK` and `refreshAskContext` in app.js; the phone has its own Ask range, default 30 nights), `ui_notes.py`, `ui_home.py`, `ui_help.py` (How to use),
   `ui_update.py` (Update tab: the morning routine, Sunday Watch step highlighted; same text as the phone's `p-update` page),
   `branding.py` (logo, banners, About box), `updater.py` (update check and install), `theme.py`, `apple_health.py`, `sample_data.py`.
 
