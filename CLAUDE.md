@@ -19,7 +19,8 @@ Two programs share the same scoring rules and must stay in step (parity is a har
   (version 1.0.<run number>, build date), builds the exe with PyInstaller (`SleepScope.spec`), builds the
   installer with Inno Setup (`installer.iss`), and publishes a GitHub Release with
   `SleepScope-Setup.exe` (per user install, desktop icon, Installed apps entry) and a portable zip.
-- Pushes touching `docs/**` also run `pages.yml`, which stamps `docs/version.js` and deploys the phone app.
+- Every push also runs `pages.yml`, which looks up the build.yml run number for the same commit, stamps
+  `docs/version.js` with the same 1.0.N, and deploys the phone app. Both apps show the version in their header.
 - When you change phone files, bump the cache name in `docs/sw.js` (`sleepscope-vNN`) or phones keep the old copy.
 - Latest installer: https://github.com/robertb-design/SleepScope/releases/latest
 

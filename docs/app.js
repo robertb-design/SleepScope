@@ -350,3 +350,5 @@ function showAbout() {
   document.getElementById('aboutbody').innerHTML = `<div><b>${v.version === 'source' ? 'Running from source' : 'Version ' + v.version}</b></div><div><b>Issued</b>&nbsp; ${v.date ? long(v.date) : long(new Date().toISOString().slice(0, 10))}</div><div><b>Copyright</b>&nbsp; \u00a9 ${year} Robert Barmore. All rights reserved.</div><div><b>License</b>&nbsp; MIT; source and the Windows version at github.com/robertb-design/SleepScope</div>`;
   const el = document.getElementById('about'); el.style.display = 'flex';
 }
+// version beside the name in the header (same number as the Windows build of this commit)
+(() => { const v = (window.SS_VERSION || {}).version || 'source'; const el = document.getElementById('hdrver'); if (el) el.textContent = v === 'source' ? 'source' : (/^\d/.test(v) ? 'v' + v : v); })();

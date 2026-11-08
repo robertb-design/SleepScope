@@ -357,7 +357,12 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__(); self.setWindowTitle('SleepScope'); self.resize(1500, 950)
         self.data = None; self.nights = []
         tb = self.addToolBar('Main'); tb.setMovable(False); tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        tb.addWidget(LogoWidget(30)); tb.addSeparator()
+        tb.addWidget(LogoWidget(30))
+        from . import version as _ver
+        vtxt = 'from source' if _ver.VERSION == 'source' else 'v' + _ver.VERSION
+        self.setWindowTitle(f'SleepScope {vtxt}')
+        vl = QtWidgets.QLabel(f'  {vtxt}  '); vl.setStyleSheet('color:#52514e; font-weight:600'); vl.setToolTip('SleepScope version. Click the logo for the About box.'); tb.addWidget(vl)
+        tb.addSeparator()
         tb.addAction('Open SD card…', self.open_card); tb.addAction('Reload', self.reload); tb.addAction('Load sample data', self.load_sample); tb.addAction('Close data', self.close_data)
         tb.addAction('Import oximeter CSV…', self.import_oximeter); tb.addAction('Import Apple Health…', self.import_apple); tb.addAction('Companion folder…', self.set_companion_folder); tb.addAction('Phone copy…', self.set_phone_folder); tb.addSeparator()
         tb.addAction('Export statistics CSV', lambda: self.export_table(self.stats_table, 'sleepscope_nights.csv'))
