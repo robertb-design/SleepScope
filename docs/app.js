@@ -7,7 +7,8 @@ let nights = []; let history = []; let claudeBusy = false; let selectedNight = n
 const store = { get: (k, d) => { try { const v = localStorage.getItem('ss_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem('ss_' + k, JSON.stringify(v)); } catch (e) {} } };
 
 // ---------------------------------------------------------------- navigation
-function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); if (p === 'land' && nights.length) drawLandscape(); }
+function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); if (p === 'land' && nights.length) drawLandscape(); if (p === 'update') updateDay(); }
+function updateDay() { const sun = new Date().getDay() === 0; $('upsunday').style.display = sun ? '' : 'none'; $('upwatch').style.opacity = sun ? '1' : '0.55'; $('upwatchwhen').textContent = sun ? 'Sundays (today)' : 'Sundays (not today)'; }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => go(b.dataset.p));
 
 // ---------------------------------------------------------------- IndexedDB for the last loaded files

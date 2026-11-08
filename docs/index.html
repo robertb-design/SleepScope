@@ -100,6 +100,16 @@
   <p class="muted">SleepScope is a reading of the data, not a medical device. Nothing leaves this phone unless you use Ask Claude. The desktop version is at github.com/robertb-design/sleepscope.</p>
 </section>
 
+<section class="page" id="p-update">
+  <div class="banner" style="--c:#1baf7a;--c2:#0f6e4f"><h2>Good morning</h2><p>Bring last night in. Four steps, in order: the ring and Watch files land in Dropbox first so the PC finds them when the card is opened.</p></div>
+  <div class="hl" id="upsunday" style="display:none"><b>Today is Sunday:</b> do the Watch export (step 2) as well.</div>
+  <div class="card step" style="--c:#e34948"><div class="badge">1</div><div style="flex:1"><h3>Ring <span class="muted">every morning</span></h3><p>Plug the ring into the PC, open <b>O2 Insight Pro</b>, click <b>Download</b>. Or from the phone: <b>ViHealth</b>, open last night, <b>Share</b>, <b>CSV</b>, save to the <b>Dropbox \ Sleepscope</b> folder.</p></div></div>
+  <div class="card step" style="--c:#eda100" id="upwatch"><div class="badge">2</div><div style="flex:1"><h3>Watch <span class="muted" id="upwatchwhen">Sundays</span></h3><p>iPhone <b>Health</b> app, tap your profile picture, <b>Export All Health Data</b>, save <b>export.zip</b> to the <b>Dropbox \ Sleepscope</b> folder, replacing the old one.</p></div></div>
+  <div class="card step" style="--c:#2a78d6"><div class="badge">3</div><div style="flex:1"><h3>PC <span class="muted">every morning</span></h3><p>Card in, open <b>SleepScope</b>, click <b>Open SD card</b> and pick the card drive (for example <b>F:</b>). This also writes <b>SleepScope card.zip</b> to Dropbox for the phone. Then put the card back in the AirSense.</p></div></div>
+  <div class="card step" style="--c:#1baf7a"><div class="badge">4</div><div style="flex:1"><h3>Phone <span class="muted">every morning</span></h3><p>Tap the button, then <b>Dropbox \ Sleepscope \ SleepScope card.zip</b>.</p><button style="--c:#1baf7a" onclick="document.getElementById('filein').click()">Choose zip or files</button></div></div>
+  <div class="card"><b>Tonight: wear the Watch to bed, ring on, card in the machine.</b><p class="muted">The card must go back in the machine before bed or tonight is not recorded. The phone keeps the last zip it loaded, so step 4 is only needed when you want the new nights here.</p></div>
+</section>
+
 <section class="page" id="p-syn">
   <div class="banner" style="--c:#1baf7a;--c2:#0f6e4f"><h2>Synopsis</h2><p>Pick a range. The rule based report is computed on the phone; Claude's reading follows if a key is saved.</p></div>
   <div class="card"><div class="row"><div><label class="f">From</label><input type="date" id="d0"></div><div><label class="f">To</label><input type="date" id="d1"></div></div>
@@ -140,6 +150,7 @@
 </main>
 <nav>
   <button data-p="start" class="active"><span class="ic">⌂</span>Start</button>
+  <button data-p="update"><span class="ic">☀</span>Update</button>
   <button data-p="syn"><span class="ic">≡</span>Synopsis</button>
   <button data-p="nights"><span class="ic">◔</span>Nights</button>
   <button data-p="land"><span class="ic">▲</span>3D</button>

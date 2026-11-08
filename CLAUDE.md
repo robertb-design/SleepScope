@@ -46,6 +46,7 @@ Desktop (`sleepscope/`):
 - `ui_main.py`: main window, toolbar, load worker, phone copy worker (writes `SleepScope card.zip` to the
   Dropbox Sleepscope folder), tables, tabs. `ui_night.py` (per night panels), `ui_landscape.py` (3D),
   `ui_ask.py` (Ask Claude, Anthropic Messages API), `ui_notes.py`, `ui_home.py`, `ui_help.py` (How to use),
+  `ui_update.py` (Update tab: the morning routine, Sunday Watch step highlighted; same text as the phone's `p-update` page),
   `branding.py` (logo, banners, About box), `updater.py` (update check and install), `theme.py`, `apple_health.py`, `sample_data.py`.
 
 Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js` (port of explain.py),

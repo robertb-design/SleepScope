@@ -11,6 +11,7 @@ import hashlib
 from .ui_landscape import LandscapeView
 from .ui_notes import NotesView
 from .ui_help import HelpView
+from .ui_update import UpdateView
 from .ui_home import HomeView
 from .branding import Page, LogoWidget, app_icon
 
@@ -385,6 +386,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tabs = QtWidgets.QTabWidget(); split.addWidget(self.tabs); split.setSizes([470, 1030])
         self.home = HomeView(); self.home.action.connect(self._home_action); self.tabs.addTab(self.home, 'Start here')
+        self.update_view = UpdateView(); self.tabs.addTab(Page(self.update_view, 'Update', 'The morning routine: ring, Watch, card, phone. Bring last night in.', '#1baf7a'), 'Update')
         self.tabs.addTab(Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'), 'How to use')
         self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(Page(self.overview, 'Overview', 'Trends across nights. Click a bar to open that night.', '#2a78d6'), 'Overview')
         self.synopsis = SynopsisView(); self.tabs.addTab(Page(self.synopsis, 'Synopsis', 'Plain English report for any date range, with Claude\'s reading beside it.', '#1baf7a'), 'Synopsis')
@@ -511,6 +513,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _tab_changed(self, i):
         if self.tabs.widget(i) is getattr(self, 'home', None): self._refresh_home()
         if self.tabs.widget(i) is getattr(self, 'notes', None): self.notes.refresh()
+        if getattr(self.tabs.widget(i), 'inner', None) is getattr(self, 'update_view', None): self.update_view.refresh()
     def _continue_conversation(self, pairs):
         self.ask.load_history(pairs); self._show_tab(self.ask)
     def _fill_events(self):
