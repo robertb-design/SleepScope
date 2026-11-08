@@ -102,6 +102,7 @@ HELP = """
 <li>"No sessions found": you picked a folder with no DATALOG inside, or the card has only tonight's partial data. Pick the drive letter itself.</li>
 <li>Installer trouble (source version): <b>install_log.txt</b> in the SleepScope folder says what failed.</li>
 <li>The app closes or shows an error: <b>app_log.txt</b> has the details.</li>
+<li>Updates fail: <b>update_log.txt</b> in the SleepScope folder records every check and download with the exact error. The installer is always at github.com/robertb-design/SleepScope/releases/latest.</li>
 <li>Ask Claude problems: <b>Test connection</b> isolates key and network problems; <b>ask_log.txt</b> records every request.</li>
 <li>Empty 3D tab: the PC's graphics driver does not provide OpenGL; everything else still works.</li>
 </ul>
