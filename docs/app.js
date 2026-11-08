@@ -339,7 +339,14 @@ $('helptext').innerHTML = `
 <h3>7. Oximeter</h3><p>In the O2Ring's app, export the night as CSV and share it to Files, then Import oximeter CSV here.</p>
 <h3>The numbers in plain words</h3><ul><li><b>Hours:</b> four hours on 70% of nights is the insurer's floor; six or more is where people feel it.</li><li><b>AHI:</b> under 5 normal, 5 to 15 mild, 15 to 30 moderate, over 30 severe. The app's flow-only AHI is a ceiling, always higher.</li><li><b>Leak:</b> 95th percentile under 24 L/min.</li><li><b>Flow limitation:</b> narrowing short of an event; fragments sleep without raising AHI.</li><li><b>SpO2 / ODI:</b> needs the ring; ODI under 5 and almost no time under 90% is the goal.</li></ul>`;
 (async () => {
-  if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js'); } catch (e) {} }
+  if ('serviceWorker' in navigator) { try {
+    // check for a new version on every open and whenever the app comes back to the front; reload once when it takes over
+    const had = !!navigator.serviceWorker.controller; let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded) { reloaded = true; location.reload(); } });
+    const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    const check = () => { try { reg.update(); } catch (e) {} }; check();
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+  } catch (e) {} }
   try { const ap = await idb.get('apple'); if (ap) appleData = AH.unpack(ap); } catch (e) {}
   try { const last = await idb.get('last'); if (last && last.files) { autoOpenSynopsis = true; $('loadmsg').textContent = 'Reloading ' + last.label + ' from last time…'; await loadFiles(last.files, last.label); } } catch (e) {}
 })();
