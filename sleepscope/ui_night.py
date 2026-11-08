@@ -256,11 +256,17 @@ class NightView(QtWidgets.QWidget):
         self._building = True; self.plots['flow'].setXRange(*self.region.getRegion(), padding=0); self._building = False
 
     def _mouse_moved(self, pos):
-        if self.night is None: return
-        p = self.plots['flow']
-        if not p.sceneBoundingRect().contains(pos) and not any(pp.sceneBoundingRect().contains(pos) for pp in self.plots.values()): return
-        x = p.vb.mapSceneToView(pos).x()
-        t = self.t0 + dt.timedelta(seconds=float(x))
+        if self.night is None or self.t0 is None or not self.night.sessions: return
+        # measure against the visible panel under the cursor (all panels share the x axis); a hidden panel maps to nonsense
+        p = next((pp for pp in self.plots.values() if pp.isVisible() and pp.sceneBoundingRect().contains(pos)), None)
+        if p is None: return
+        try:
+            x = float(p.vb.mapSceneToView(pos).x())
+        except Exception:
+            return
+        end = max((s.start - self.t0).total_seconds() + s.duration for s in self.night.sessions)
+        if not np.isfinite(x) or x < -6 * 3600 or x > end + 6 * 3600: return
+        t = self.t0 + dt.timedelta(seconds=x)
         parts = [t.strftime('%H:%M:%S')]
         for s in self.night.sessions:
             off = (s.start - self.t0).total_seconds()
