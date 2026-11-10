@@ -11,6 +11,7 @@ import hashlib
 from .ui_landscape import LandscapeView
 from .ui_notes import NotesView
 from .ui_help import HelpView
+from .ui_update import UpdateView
 from .ui_home import HomeView
 from .ui_equipment import EquipmentView
 from . import ui_ask
@@ -37,6 +38,45 @@ class LoadWorker(QtCore.QThread):
             self.done.emit(data)
         except Exception as e:
             import traceback; self.failed.emit(traceback.format_exc())
+
+
+class PhoneSyncWorker(QtCore.QThread):
+    """Writes the card (last 45 nights of DATALOG, STR.edf, Identification) as one zip into a synced folder such as
+    Dropbox\\SleepScope, so the phone app can open it without reading the SD card itself."""
+    done = QtCore.Signal(str)
+    def __init__(self, root, datalog, folder, nights, ring_files=(), health=None):
+        super().__init__(); self.root, self.datalog, self.folder, self.nights, self.ring_files, self.health = root, datalog, folder, nights, list(ring_files), health
+    def run(self):
+        import zipfile, datetime as _dt
+        try:
+            os.makedirs(self.folder, exist_ok=True)
+            keep = {n.date for n in self.nights[-45:]}
+            tmp = os.path.join(self.folder, 'SleepScope card.zip.part'); out = os.path.join(self.folder, 'SleepScope card.zip')
+            count = 0
+            with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=5) as z:
+                for name in ('STR.edf', 'Identification.json', 'Identification.tgt', 'Identification.crc'):
+                    p_ = os.path.join(self.root, name)
+                    if os.path.exists(p_): z.write(p_, name)
+                for sub in sorted(os.listdir(self.datalog)):
+                    d_ = os.path.join(self.datalog, sub)
+                    if not (os.path.isdir(d_) and len(sub) == 8 and sub.isdigit()): continue
+                    day = _dt.date(int(sub[:4]), int(sub[4:6]), int(sub[6:]))
+                    if day not in keep and (day - _dt.timedelta(days=1)) not in keep: continue
+                    for fn in os.listdir(d_):
+                        if fn.lower().endswith('.edf'): z.write(os.path.join(d_, fn), f'DATALOG/{sub}/{fn}'); count += 1
+                rings = 0
+                for rp in self.ring_files:
+                    try: z.write(rp, 'O2/' + os.path.basename(rp)); rings += 1
+                    except OSError: pass
+                about = (SETTINGS.value('about_me', '') or '').strip()
+                if about: z.writestr('about.txt', about)                 # About me for the phone's Ask Claude
+                if self.health:                                        # Watch nights, trimmed to the card's window, for the phone
+                    import json as _json
+                    z.writestr('health.json', _json.dumps(apple_health.to_sync(self.health, self.nights[-45].date if len(self.nights) >= 45 else self.nights[0].date)))
+            os.replace(tmp, out)
+            self.done.emit(f'Phone copy updated: {out} ({os.path.getsize(out) / 1e6:.0f} MB, {count} card files' + (f', {rings} ring files' if rings else '') + (', Watch data' if self.health else '') + ')')
+        except Exception as e:
+            self.done.emit(f'Phone copy failed: {e}')
 
 
 class Table(QtWidgets.QTableWidget):
@@ -82,7 +122,10 @@ class OverviewView(QtWidgets.QWidget):
         def g(k): return np.array([s.get(k, np.nan) for s in S], dtype=float)
         def plot(row, col, title, unit=''):
             p = self.gl.addPlot(row=row, col=col, axisItems={'bottom': BarAxis(labs, orientation='bottom')}); style_plot(p)
-            p.setTitle(title, size='10pt', color='#0b0b0b'); p.setLabel('left', unit); p.setMouseEnabled(x=False, y=False); p.hideButtons()
+            from . import explain as _ex
+            cap = _ex.overview_caption(title)
+            p.setTitle(f"<span style='font-size:10pt;color:#0b0b0b'>{title}</span>" + (f"<br><span style='font-size:8.5pt;color:#52514e'>{cap}</span>" if cap else ''))
+            p.setLabel('left', unit); p.setMouseEnabled(x=False, y=False); p.hideButtons()
             ax = p.getAxis('bottom'); ax.setStyle(tickFont=QtGui.QFont('Segoe UI', 8), autoExpandTextSpace=True)
             # thin the labels so they never overlap: short form past 6 nights, every k-th past 14
             short = len(labs) > 6; k = max(1, int(np.ceil(len(labs) / 14)))
@@ -97,7 +140,7 @@ class OverviewView(QtWidgets.QWidget):
         for i, v in enumerate(g('hours')):
             t = pg.TextItem(f'{v:.1f}', color=C['text2'], anchor=(0.5, 1)); t.setPos(i, v); p.addItem(t)
         # AHI machine vs app
-        p = plot(0, 1, 'AHI: machine (blue) vs app flow-only (orange), RDI app (violet line)', '/h')
+        p = plot(0, 1, 'AHI: machine (blue) vs app recheck (orange), RDI app (violet line)', '/h')
         bars(p, g('AHI'), C['blue'], 0.28, -0.3); bars(p, g('app_AHI'), C['orange'], 0.28, 0.0)
         p.plot(x, g('app_RDI'), pen=pg.mkPen(C['violet'], width=2), symbol='o', symbolBrush=C['violet'], symbolPen=None, symbolSize=7)
         p.addLine(y=5, pen=pg.mkPen(C['red'], style=QtCore.Qt.DashLine))
@@ -325,7 +368,10 @@ at least 1.5x the recent median) follows within 10 s. RDI (app) = apneas + hypop
 Zero windows across a night means no Cheyne-Stokes pattern was found.</li>
 <li><b>Mode:</b> "CPAP" when set pressure is flat after the first 15% of the session, otherwise "AutoSet". Inferred from pressure, not read from settings
 (STR.edf carries the settings when present on the card).</li>
-<li><b>ODI:</b> count of SpO2 drops of 3% or more from the preceding 60 s maximum, per hour, when oximetry exists.</li>
+<li><b>ODI:</b> dips of 3% or more below the median of the preceding 2 minutes, lasting 10 s or longer, per hour of oximetry. Dips that coincide (within 10 s) with ring motion of 30 or more are treated as sensor artifact and left out; the count left out is shown separately.</li>
+<li><b>Hypopnea confirmation:</b> when the ring covers an app hypopnea, it counts only if SpO2 falls 3 points or more below the 2 minute pre-event median during the event or within 30 s after it, or the pulse rises 6 bpm or more within 15 s after it (a stand-in for an EEG arousal, which home equipment cannot see). The H confirmed column shows how many passed. Without the ring, hypopneas stay flow only and are counted.</li>
+<li><b>Large leak:</b> app events whose midpoint falls inside a large-leak run (over 24 L/min for 60 s or more) are listed but not counted in the app's AHI, RDI or flow limitation counts, because the flow signal is unreliable while air is escaping. The In leak column counts them. Machine events are never altered.</li>
+<li><b>Pressure setting column:</b> taken from the machine's own daily settings record (STR.edf) when the card has it; otherwise from the trace with each session's ramp (up to 45 minutes) excluded, marked (trace).</li>
 </ul>
 <p><b>Breath metrics</b> are descriptive only and do not generate events: Ti, Te, I:E, PIF, PEF, PIF/PEF, integrated tidal volume, plateau ratio.
 The machine's flow limitation index is proprietary and could not be reproduced from breath shape alone, which is why the machine channel is used for runs.</p>
@@ -354,9 +400,16 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__(); self.setWindowTitle('SleepScope'); self.resize(1500, 950)
         self.data = None; self.nights = []
         tb = self.addToolBar('Main'); tb.setMovable(False); tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        tb.addWidget(LogoWidget(30)); tb.addSeparator()
+        from .updater import Updater
+        self.updater = Updater(self, SETTINGS); QtCore.QTimer.singleShot(800, lambda: self.updater.check(quiet=True))   # every start
+        tb.addWidget(LogoWidget(30))
+        from . import version as _ver
+        vtxt = 'from source' if _ver.VERSION == 'source' else 'v' + _ver.VERSION
+        self.setWindowTitle(f'SleepScope {vtxt}')
+        vl = QtWidgets.QLabel(f'  {vtxt}  '); vl.setStyleSheet('color:#52514e; font-weight:600'); vl.setToolTip('SleepScope version. Click the logo for the About box.'); tb.addWidget(vl)
+        tb.addSeparator()
         tb.addAction('Open SD card…', self.open_card); tb.addAction('Reload', self.reload); tb.addAction('Load sample data', self.load_sample); tb.addAction('Close data', self.close_data)
-        tb.addAction('Import oximeter CSV…', self.import_oximeter); tb.addAction('Import Apple Health…', self.import_apple); tb.addAction('Companion folder…', self.set_companion_folder); tb.addSeparator()
+        tb.addAction('Import oximeter CSV…', self.import_oximeter); tb.addAction('Import Apple Health…', self.import_apple); tb.addAction('Companion folder…', self.set_companion_folder); tb.addAction('Phone copy…', self.set_phone_folder); tb.addAction('Check for updates', lambda: self.updater.check(quiet=False)); tb.addSeparator()
         tb.addAction('Export statistics CSV', lambda: self.export_table(self.stats_table, 'sleepscope_nights.csv'))
         tb.addAction('Export events CSV', self.export_events); tb.addAction('Save chart as PNG', self.save_png)
         self.progress = QtWidgets.QProgressBar(); self.progress.setFixedWidth(220); self.progress.setVisible(False)
@@ -366,12 +419,17 @@ class MainWindow(QtWidgets.QMainWindow):
         left = QtWidgets.QWidget(); ll = QtWidgets.QVBoxLayout(left); ll.setContentsMargins(4, 4, 0, 4)
         self.night_table = Table(['Night', 'Hours', 'Pressure setting', 'AHI', 'AHI app', 'Leak 95', 'P 95'])
         self.night_table.itemSelectionChanged.connect(self._night_selected); ll.addWidget(self.night_table)
+        from . import explain as _ex
+        for ci, k in enumerate(['label', 'hours', 'setting', 'AHI', 'app_AHI', 'leak_95', 'press_95']):
+            it = self.night_table.horizontalHeaderItem(ci)
+            if it is not None: it.setToolTip(_ex.COLUMN_HELP.get(k, ''))
         self.device_label = QtWidgets.QLabel(''); self.device_label.setWordWrap(True); self.device_label.setStyleSheet('color:#52514e'); ll.addWidget(self.device_label)
         left.setMinimumWidth(440); split.addWidget(left)
 
         self.tabs = QtWidgets.QTabWidget(); split.addWidget(self.tabs); split.setSizes([470, 1030])
         self.home = HomeView(); self.home.action.connect(self._home_action); self.tabs.addTab(self.home, 'Start here')
-        self.help_page = Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'); self.tabs.addTab(self.help_page, 'How to use')
+        self.update_view = UpdateView(); self.tabs.addTab(Page(self.update_view, 'Update', 'The morning routine: ring, Watch, card, phone. Bring last night in.', '#1baf7a'), 'Update')
+        self.tabs.addTab(Page(HelpView(), 'How to use', 'Everything from the card reader to the Claude key, step by step.', '#1d4f91'), 'How to use')
         self.overview = OverviewView(); self.overview.night_clicked.connect(self.select_night); self.tabs.addTab(Page(self.overview, 'Overview', 'Trends across nights. Click a bar to open that night.', '#2a78d6'), 'Overview')
         self.synopsis = SynopsisView(); self.tabs.addTab(Page(self.synopsis, 'Synopsis', 'Plain English report for any date range, with Claude\'s reading beside it.', '#1baf7a'), 'Synopsis')
         self.landscape = LandscapeView(); self.synopsis.on_range = lambda a, b: self.landscape.set_range(a, b); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed. Click any pillar, pool or patch of ground for a plain language explanation.', '#6250d6'), '3D Landscape')
@@ -388,7 +446,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ev_table = Table(['Time', 'Type', 'Source', 'Dur s', 'Set P', 'Mask P', 'Leak', 'FlowLim', 'Detail']); self.ev_table.doubleClicked.connect(self._event_dbl)
         evl.addWidget(self.ev_table); self.tabs.addTab(Page(ev_w, 'Events', 'Every event the machine scored and every one the app found. Double-click to see it.', '#e34948'), 'Events')
         self.breaths = BreathView(); self.tabs.addTab(Page(self.breaths, 'Breaths', 'Breath by breath mechanics, and events against the pressure they happened at.', '#1baf7a'), 'Breaths')
-        self.stats_table = Table([h for _, h, _ in scoring.STAT_COLUMNS]); self.tabs.addTab(Page(self.stats_table, 'Statistics', 'Every number for every night. Export to CSV from the toolbar.', '#eda100'), 'Statistics')
+        self.stats_table = Table([h for _, h, _ in scoring.STAT_COLUMNS]); self.tabs.addTab(Page(self.stats_table, 'Statistics', 'Every number for every night. Hover a column heading for what it means. Export to CSV from the toolbar.', '#eda100'), 'Statistics')
         dev = QtWidgets.QWidget(); dl = QtWidgets.QVBoxLayout(dev); self.dev_text = QtWidgets.QLabel(''); self.dev_text.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         dl.addWidget(self.dev_text); self.str_table = Table(['Day']); dl.addWidget(self.str_table); self.tabs.addTab(Page(dev, 'Device and settings', 'Machine identity and the machine\'s own daily summary when the card root is opened.', '#8a8985'), 'Device and settings')
         meth = QtWidgets.QTextBrowser(); meth.setOpenExternalLinks(True); meth.setHtml(METHODS); self.tabs.addTab(Page(meth, 'Methods', 'How every number is computed and how far to trust it.', '#1d4f91'), 'Methods')
@@ -440,8 +498,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_label.setText(f"{ident.get('model', 'Unknown device')}  SN {ident.get('serial', '?')}\n{data['datalog']}")
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
         self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
-        self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
+        scoring.apply_str_settings(self.nights, self.night_view.str_data)
+        self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.ask.set_profile_folder(self.phone_folder()); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
         if self.nights: self._auto_companions(data.get('root'))
+        if self.nights: self._phone_sync()
         if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self._show_tab(self.synopsis)
         if not self.nights: QtWidgets.QMessageBox.information(self, 'No data', 'No sessions of 5 minutes or longer were found under that folder.')
 
@@ -449,10 +509,15 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = []
         for n in self.nights:
             s = n.stats
-            rows.append([n.label, f"{s['hours']:.2f}", scoring.pressure_label(s), f"{s['AHI']:.2f}", f"{s['app_AHI']:.2f}", scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
+            rows.append([n.label, f"{s['hours']:.2f}", s.get('setting') or scoring.pressure_label(s), scoring.fmt('AHI', s['AHI']), scoring.fmt('app_AHI', s['app_AHI']) or ('card out' if s.get('summary_only') else ''), scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
         self.night_table.fill(rows)
     def _fill_stats(self):
+        if hasattr(self, 'ask'): self.ask.refresh_context()          # ring and Watch attach after the first fill
         self.stats_table.fill([[scoring.fmt(k, n.stats.get(k)) for k, _, _ in scoring.STAT_COLUMNS] for n in self.nights])
+        from . import explain as _ex
+        for ci, (k, lab, _) in enumerate(scoring.STAT_COLUMNS):
+            it = self.stats_table.horizontalHeaderItem(ci)
+            if it is not None and k in _ex.COLUMN_HELP: it.setToolTip(f'<b>{lab}</b><br>{_ex.COLUMN_HELP[k]}')
         total, hit = scoring.validation_summary(self.nights)
         self.stats_table.setToolTip(f'App detector reproduced {hit} of {total} machine-scored apneas on this card.')
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded. App detector reproduced {hit} of {total} machine-scored apneas on this card.")
@@ -499,6 +564,7 @@ class MainWindow(QtWidgets.QMainWindow):
         w = self.tabs.widget(i); inner = getattr(w, 'inner', w)
         if w is getattr(self, 'home', None): self._refresh_home()
         if inner is getattr(self, 'notes', None): self.notes.refresh()
+        if inner is getattr(self, 'update_view', None): self.update_view.refresh()
     def _continue_conversation(self, pairs):
         self.ask.load_history(pairs); self._show_tab(self.ask)
     def _fill_events(self):
@@ -526,12 +592,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ oximeter and export
     def companion_folders(self, root):
         home = os.path.expanduser('~')
-        cands = [root, os.path.dirname(root) if root else None, SETTINGS.value('ox_folder', ''),
+        cands = [root, os.path.dirname(root) if root else None, SETTINGS.value('ox_folder', ''), self.phone_folder(),
+                 *[self._find_sleepscope_folder(r) for r in self.sync_roots()],
                  os.path.join(home, 'Dropbox'), os.path.join(home, 'Dropbox', 'SleepScope'), os.path.join(home, 'Dropbox', 'O2Ring'),
                  os.path.join(home, 'OneDrive'), os.path.join(home, 'Downloads'), os.path.join(home, 'Documents', 'SleepScope')]
         return [c for c in cands if c]
     def _auto_companions(self, root):
         """Find oximeter CSVs (and Health Shortcut files) near the card or in the companion folder and attach them to the loaded nights."""
+        self.apple_data = None
         try:
             ox_files, health_files = loader.find_companion_files(self.companion_folders(root))
         except Exception:
@@ -544,9 +612,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 n = 0
             if n: filled += n; used += 1
         hmatched = 0
+        exports = [p for p in health_files if not p.lower().endswith(('.txt', '.csv'))]
+        if exports:                                                    # newest Health export wins; parsed once per file version
+            p = max(exports, key=os.path.getmtime); key = (p, os.path.getmtime(p), self.nights[0].date)
+            try:
+                if getattr(self, '_health_cache', (None,))[0] != key:
+                    self.statusBar().showMessage('Reading Apple Health export…'); QtWidgets.QApplication.processEvents()
+                    self._health_cache = (key, apple_health.read_export(p, date_from=self.nights[0].date))
+                self.apple_data = self._health_cache[1]; hmatched = apple_health.attach(self.apple_data, self.nights)
+            except Exception:
+                pass
         for p in health_files:
+            if not p.lower().endswith(('.txt', '.csv')) or hmatched: continue
             try:
                 data = apple_health.read_shortcut_csv(p); hmatched = max(hmatched, apple_health.attach(data, self.nights))
+                if hmatched: self.apple_data = data
             except Exception:
                 pass
         if filled or hmatched:
@@ -556,6 +636,76 @@ class MainWindow(QtWidgets.QMainWindow):
             if filled: parts.append(f'oximeter: {used} file{"s" if used != 1 else ""} found, SpO2 attached to {filled} session{"s" if filled != 1 else ""}')
             if hmatched: parts.append(f'Apple Health: matched {hmatched} night{"s" if hmatched != 1 else ""}')
             self.statusBar().showMessage(f'{len(self.nights)} nights loaded. ' + '; '.join(parts) + '.')
+    @staticmethod
+    def sync_roots():
+        """Dropbox and OneDrive roots on this PC. Covers 'Dropbox', team folders named '<Team> Dropbox', and the paths
+        the Dropbox app records in info.json."""
+        home = os.path.expanduser('~'); roots = []
+        for base in (os.environ.get('LOCALAPPDATA', ''), os.environ.get('APPDATA', '')):
+            info = os.path.join(base, 'Dropbox', 'info.json') if base else ''
+            if info and os.path.exists(info):
+                try:
+                    with open(info, encoding='utf-8') as fh:
+                        for v in json.load(fh).values():
+                            if isinstance(v, dict) and v.get('path'): roots.append(v['path'])
+                except Exception: pass
+        try:
+            for name in os.listdir(home):
+                if (name == 'Dropbox' or name.endswith(' Dropbox') or name == 'OneDrive' or name.startswith('OneDrive - ')) and os.path.isdir(os.path.join(home, name)):
+                    roots.append(os.path.join(home, name))
+        except OSError: pass
+        out = []
+        for r in roots:
+            r = os.path.normpath(r)
+            if os.path.isdir(r) and r not in out: out.append(r)
+        out.sort(key=lambda r: 'onedrive' in r.lower())          # Dropbox first
+        return out
+    @staticmethod
+    def _find_sleepscope_folder(root):
+        """An existing folder named SleepScope (any case) at the root or one level down, such as a team member folder."""
+        try:
+            for name in os.listdir(root):
+                if name.lower() == 'sleepscope' and os.path.isdir(os.path.join(root, name)): return os.path.join(root, name)
+            for name in sorted(os.listdir(root)):
+                sub = os.path.join(root, name)
+                if name.startswith('.') or not os.path.isdir(sub): continue
+                try:
+                    for n2 in os.listdir(sub):
+                        if n2.lower() == 'sleepscope' and os.path.isdir(os.path.join(sub, n2)): return os.path.join(sub, n2)
+                except OSError: pass
+        except OSError: pass
+        return None
+    def phone_folder(self):
+        f = SETTINGS.value('phone_folder', '')
+        if f == 'off': return None
+        if f: return f
+        roots = self.sync_roots()
+        for r in roots:
+            hit = self._find_sleepscope_folder(r)
+            if hit: return hit
+        return os.path.join(roots[0], 'SleepScope') if roots else None
+    def _phone_sync(self):
+        folder = self.phone_folder()
+        if not folder or not self.data or not self.data.get('datalog') or not os.path.isdir(self.data['datalog']): return
+        if os.path.abspath(self.data['root']).startswith(os.path.abspath(folder)): return      # loading from the phone copy itself
+        if getattr(self, 'sync_worker', None) is not None and self.sync_worker.isRunning(): return
+        try:
+            import time as _t
+            ring = [p_ for p_ in loader.find_companion_files(self.companion_folders(self.data.get('root')))[0] if _t.time() - os.path.getmtime(p_) < 60 * 86400]
+        except Exception: ring = []
+        self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights, ring, getattr(self, 'apple_data', None))
+        self.sync_worker.done.connect(lambda msg: self.statusBar().showMessage(msg, 15000)); self.sync_worker.start()
+    def set_phone_folder(self):
+        cur = self.phone_folder() or os.path.expanduser('~')
+        box = QtWidgets.QMessageBox(self); box.setWindowTitle('Phone copy')
+        box.setText(f"Every time a card is opened, SleepScope saves it as one file, SleepScope card.zip, in a synced folder so the phone app can open it.\n\nNow: {self.phone_folder() or 'off'}")
+        b1 = box.addButton('Choose folder…', QtWidgets.QMessageBox.AcceptRole); b2 = box.addButton('Turn off', QtWidgets.QMessageBox.DestructiveRole); box.addButton('Close', QtWidgets.QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is b1:
+            d = QtWidgets.QFileDialog.getExistingDirectory(self, 'Synced folder for the phone copy, for example Dropbox\\SleepScope', cur)
+            if d: SETTINGS.setValue('phone_folder', d); self._phone_sync()
+        elif box.clickedButton() is b2:
+            SETTINGS.setValue('phone_folder', 'off'); self.statusBar().showMessage('Phone copy turned off.')
     def set_companion_folder(self):
         d = QtWidgets.QFileDialog.getExistingDirectory(self, 'Folder where the O2Ring CSV exports (and the Health Shortcut file) are saved, for example Dropbox\\SleepScope', SETTINGS.value('ox_folder', os.path.expanduser('~')))
         if not d: return
@@ -580,11 +730,11 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if p.lower().endswith(('.txt', '.csv')): data = apple_health.read_shortcut_csv(p)
             else: data = apple_health.read_export(p, date_from=self.nights[0].date, progress=lambda n: (self.statusBar().showMessage(f'Reading Apple Health export: {n:,} records'), QtWidgets.QApplication.processEvents()))
-            n = apple_health.attach(data, self.nights)
+            n = apple_health.attach(data, self.nights); self.apple_data = data
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, 'Apple Health import', str(e)); return
-        self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights); self._refresh_home()
-        QtWidgets.QMessageBox.information(self, 'Apple Health import', f'{len(data["sleep"]):,} sleep records, {len(data["hr"]):,} heart rate samples, {len(data["spo2"]):,} SpO2 samples read.\nMatched to {n} of {len(self.nights)} nights.')
+        self._fill_stats(); self._night_selected(); self.synopsis.generate(); self.landscape.set_nights(self.nights); self._refresh_home()
+        QtWidgets.QMessageBox.information(self, 'Apple Health import', f'{len(data["sleep"]):,} sleep records, {len(data.get("bd", [])):,} breathing disturbance nights, {len(data["hr"]):,} heart rate samples, {len(data["spo2"]):,} SpO2 samples read.\nMatched to {n} of {len(self.nights)} nights.\n\nTip: leave export.zip (or the unzipped export folder) in the Sleepscope folder and SleepScope picks it up by itself on every load.')
     def export_table(self, table, default):
         p, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save CSV', default, 'CSV (*.csv)')
         if p: table.to_csv(p); self.statusBar().showMessage('Saved ' + p)

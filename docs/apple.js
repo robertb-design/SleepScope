@@ -1,14 +1,14 @@
 /* Apple Health on the phone: streamed export.zip parser and a Shortcuts CSV importer. */
 'use strict';
 const AH = (() => {
-  const KEEP = { 'HKCategoryTypeIdentifierSleepAnalysis': 'sleep', 'HKQuantityTypeIdentifierHeartRate': 'hr', 'HKQuantityTypeIdentifierOxygenSaturation': 'spo2', 'HKQuantityTypeIdentifierRespiratoryRate': 'rr', 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN': 'hrv' };
+  const KEEP = { 'HKCategoryTypeIdentifierSleepAnalysis': 'sleep', 'HKQuantityTypeIdentifierHeartRate': 'hr', 'HKQuantityTypeIdentifierOxygenSaturation': 'spo2', 'HKQuantityTypeIdentifierRespiratoryRate': 'rr', 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN': 'hrv', 'HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances': 'bd' };
   const STAGE = { InBed: 'InBed', Awake: 'Awake', AsleepCore: 'Core', AsleepDeep: 'Deep', AsleepREM: 'REM', AsleepUnspecified: 'Asleep', Asleep: 'Asleep' };
   const pd = (s) => { const m = s.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null; };
   const nightKey = (d) => { const x = new Date(d.getTime() - 12 * 3600e3); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
 
   /** Stream export.zip (or export.xml) and return {sleep:[{s,e,stage,src}], hr:[[t,v]], spo2:[[t,v]], rr:[[t,v]], hrv:[[t,v]]} with times in ms. */
   async function readExport(file, sinceMs, progress) {
-    const out = { sleep: [], hr: [], spo2: [], rr: [], hrv: [] }; let carry = ''; let bytes = 0; const total = file.size;
+    const out = { sleep: [], hr: [], spo2: [], rr: [], hrv: [], bd: [] }; let carry = ''; let bytes = 0; const total = file.size;
     const re = /<Record\s+type="([^"]+)"([^>]*?)\/?>/g;
     const attr = (s, k) => { const m = s.match(new RegExp(k + '="([^"]*)"')); return m ? m[1] : null; };
     const handle = (text) => {
@@ -29,13 +29,13 @@ const AH = (() => {
     } else {
       const reader = file.stream().getReader(); for (;;) { const { done, value } = await reader.read(); if (done) break; feed(value); await new Promise(r => setTimeout(r, 0)); }
     }
-    for (const k of ['hr', 'spo2', 'rr', 'hrv']) out[k].sort((a, b) => a[0] - b[0]); out.sleep.sort((a, b) => a.s - b.s);
+    for (const k of ['hr', 'spo2', 'rr', 'hrv', 'bd']) out[k].sort((a, b) => a[0] - b[0]); out.sleep.sort((a, b) => a.s - b.s);
     return out;
   }
 
   /** CSV from the SleepScope Shortcut (type,start,end,value per line, any order of columns tolerated) or any CSV with those headers. */
   function readShortcutCsv(text) {
-    const out = { sleep: [], hr: [], spo2: [], rr: [], hrv: [] };
+    const out = { sleep: [], hr: [], spo2: [], rr: [], hrv: [], bd: [] };
     const parseDate = (s) => { s = (s || '').trim().replace(/\bat\b/, '').replace(/\s+/g, ' '); let d = pd(s); if (d) return d; const t = Date.parse(s); return Number.isNaN(t) ? null : new Date(t); };
     const lines = text.split(/\r?\n/).filter(l => l.trim()); if (!lines.length) return out;
     let hdr = lines[0].toLowerCase().split(',').map(x => x.trim()); let start = 1; let ti = hdr.indexOf('type'), si = hdr.findIndex(h => h.startsWith('start')), ei = hdr.findIndex(h => h.startsWith('end')), vi = hdr.indexOf('value');
@@ -55,27 +55,55 @@ const AH = (() => {
     return m;
   }
 
-  /** Attach per-night summaries: night.apple = {stages, hr, spo2, asleep_h, deep_min, rem_min, core_min, awake_min, hr_mean, hr_min, spo2_min, spo2_mean, hrv, rr}. Returns nights matched. */
+  /** Attach per-night summaries: night.apple = {stages, hr, spo2, asleep_h, deep_min, rem_min, core_min, awake_min, hr_mean, hr_min, spo2_min, spo2_mean, hrv, rr, bd, cover_pct}
+   * and refresh the Watch columns in night.stats. Nights with only daytime samples (Watch not worn to bed) get nothing. Returns nights matched. */
   function attach(data, nights) {
-    const by = {}; const bucket = (k) => (by[k] ||= { sleep: [], hr: [], spo2: [], rr: [], hrv: [] });
+    const keys = ['hr', 'spo2', 'rr', 'hrv', 'bd'];
+    const by = {}; const bucket = (k) => (by[k] ||= { sleep: [], hr: [], spo2: [], rr: [], hrv: [], bd: [] });
     for (const r of data.sleep) bucket(nightKey(new Date(r.s))).sleep.push(r);
-    for (const k of ['hr', 'spo2', 'rr', 'hrv']) for (const [t, v] of data[k]) bucket(nightKey(new Date(t)))[k].push([t, v]);
+    for (const k of keys) for (const [t, v] of (data[k] || [])) bucket(nightKey(new Date(t)))[k].push([t, v]);
     let count = 0;
     for (const nt of nights) {
-      const d = by[nt.date]; if (!d) { nt.apple = null; continue; }
-      const srcs = {}; for (const r of d.sleep) (srcs[r.src] ||= new Set()).add(r.stage); const best = Object.keys(srcs).sort((a, b) => srcs[b].size - srcs[a].size)[0];
-      const stages = d.sleep.filter(r => r.src === best); const mins = (n) => stages.filter(r => r.stage === n).reduce((a, r) => a + (r.e - r.s) / 60000, 0);
-      let w0 = Infinity, w1 = -Infinity; for (const r of stages) { w0 = Math.min(w0, r.s); w1 = Math.max(w1, r.e); }
-      const inWin = (arr) => stages.length ? arr.filter(([t]) => t >= w0 && t <= w1) : arr;
-      const hr = inWin(d.hr), sp = inWin(d.spo2), hrv = d.hrv.filter(([t]) => !stages.length || (t >= w0 - 3600e3 && t <= w1 + 3600e3)), rr = inWin(d.rr);
-      const mean = (a) => a.length ? a.reduce((x, [, v]) => x + v, 0) / a.length : NaN; const min = (a) => a.length ? Math.min(...a.map(x => x[1])) : NaN;
-      const asleep = mins('Core') + mins('Deep') + mins('REM') + mins('Asleep');
-      nt.apple = { stages, hr, spo2: sp, asleep_h: stages.length ? asleep / 60 : NaN, deep_min: mins('Deep'), rem_min: mins('REM'), core_min: mins('Core'), awake_min: mins('Awake'), inbed_h: mins('InBed') / 60, hr_mean: mean(hr), hr_min: min(hr), spo2_mean: mean(sp), spo2_min: min(sp), hrv: mean(hrv), rr: mean(rr) };
-      if (stages.length || hr.length) count++;
+      const d = by[nt.date]; nt.apple = null;
+      if (d) {
+        const srcs = {}; for (const r of d.sleep) (srcs[r.src] ||= new Set()).add(r.stage); const best = Object.keys(srcs).sort((a, b) => srcs[b].size - srcs[a].size)[0];
+        const stages = d.sleep.filter(r => r.src === best); const mins = (n) => stages.filter(r => r.stage === n).reduce((a, r) => a + (r.e - r.s) / 60000, 0);
+        let w0 = Infinity, w1 = -Infinity; for (const r of stages) { w0 = Math.min(w0, r.s); w1 = Math.max(w1, r.e); }
+        const inWin = (arr) => stages.length ? arr.filter(([t]) => t >= w0 && t <= w1) : arr;
+        const hr = inWin(d.hr), sp = inWin(d.spo2), hrv = d.hrv.filter(([t]) => !stages.length || (t >= w0 - 3600e3 && t <= w1 + 3600e3)), rr = inWin(d.rr);
+        const mean = (a) => a.length ? a.reduce((x, [, v]) => x + v, 0) / a.length : NaN; const min = (a) => a.length ? Math.min(...a.map(x => x[1])) : NaN;
+        const med = (a) => { if (!a.length) return NaN; const v = a.map(x => x[1]).sort((x, y) => x - y); const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+        const ASLEEP = new Set(['Core', 'Deep', 'REM', 'Asleep']); const asleep = mins('Core') + mins('Deep') + mins('REM') + mins('Asleep');
+        // share of Watch sleep with the mask on: overlap of asleep stages with the machine sessions
+        let cover = NaN;
+        if (stages.length && asleep > 0) {
+          if (nt.sessions.length) { let ov = 0; for (const r of stages) { if (!ASLEEP.has(r.stage)) continue; for (const x of nt.sessions) { const a0 = x.start.getTime(), a1 = a0 + x.duration * 1000; const lo = Math.max(r.s, a0), hi = Math.min(r.e, a1); if (hi > lo) ov += (hi - lo) / 60000; } } cover = Math.min(100, 100 * ov / asleep); }
+          else if (nt.hours) cover = Math.min(100, 100 * nt.hours * 60 / asleep);
+        }
+        const bd = d.bd.map(x => x[1]);
+        if (stages.length || bd.length) {
+          nt.apple = { stages, hr, spo2: sp, asleep_h: stages.length ? asleep / 60 : NaN, deep_min: stages.length ? mins('Deep') : NaN, rem_min: stages.length ? mins('REM') : NaN, core_min: mins('Core'), awake_min: stages.length ? mins('Awake') : NaN, inbed_h: mins('InBed') / 60,
+            hr_mean: mean(hr), hr_min: min(hr), spo2_mean: mean(sp), spo2_min: min(sp), hrv: mean(hrv), rr: med(rr), bd: bd.length ? bd.reduce((x, y) => x + y, 0) / bd.length : NaN, cover_pct: cover };
+          count++;
+        }
+      }
+      if (nt.stats) Object.assign(nt.stats, watchFields(nt));
     }
     return count;
   }
+  /** The Watch columns for the nights table (NaN when there is no Watch data for the night). Same keys as the desktop. */
+  function watchFields(nt) {
+    const a = nt.apple || {}; const g = (k) => (a[k] ?? NaN); const st = !!(a.stages && a.stages.length);
+    return { w_bd: g('bd'), w_asleep: st ? g('asleep_h') : NaN, w_cover: g('cover_pct'), w_deeprem: st ? g('deep_min') + g('rem_min') : NaN, w_hrv: g('hrv'), w_rr: g('rr') };
+  }
+  /** health.json written by the desktop into SleepScope card.zip: local wall clock text times, converted to ms here. */
+  function fromSync(o) {
+    const t = (x) => { const d = pd(x); return d ? d.getTime() : NaN; };
+    const out = { sleep: (o.sleep || []).map(r => ({ s: t(r.s), e: t(r.e), stage: r.stage, src: r.src })).filter(r => Number.isFinite(r.s) && Number.isFinite(r.e)) };
+    for (const k of ['hr', 'spo2', 'rr', 'hrv', 'bd']) out[k] = (o[k] || []).map(([a, v]) => [t(a), v]).filter(x => Number.isFinite(x[0]));
+    return out;
+  }
   /** Compact form for IndexedDB persistence. */
-  const pack = (data) => JSON.stringify(data); const unpack = (s) => JSON.parse(s);
-  return { readExport, readShortcutCsv, attach, pack, unpack };
+  const pack = (data) => JSON.stringify(data); const unpack = (s) => { const d = JSON.parse(s); d.bd ||= []; return d; };
+  return { readExport, readShortcutCsv, attach, watchFields, fromSync, pack, unpack };
 })();

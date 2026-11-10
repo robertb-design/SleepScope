@@ -177,16 +177,28 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
 
     # ---- apple health
     ah = [n for n in sel if getattr(n, 'apple', None)]
+    w_all = [n for n in nights if getattr(n, 'apple', None)]
+    if not ah and w_all:
+        h2('Apple Watch')
+        p(f'No Watch sleep on the nights shown. The last night with Watch data is {w_all[-1].date:%a %m/%d}; set the range to include it, or open it in the Night tab. '
+          'Wear the Watch to bed with Sleep tracking on and the next export fills these nights in.')
     if ah:
         h2('Apple Watch')
         asleep = np.array([n.apple.get('asleep_h', np.nan) for n in ah]); deep = np.array([n.apple.get('deep_min', np.nan) for n in ah]); rem = np.array([n.apple.get('rem_min', np.nan) for n in ah])
         awake = np.array([n.apple.get('awake_min', np.nan) for n in ah]); hr = np.array([n.apple.get('hr_mean', np.nan) for n in ah]); hrv = np.array([n.apple.get('hrv', np.nan) for n in ah]); wsp = np.array([n.apple.get('spo2_min', np.nan) for n in ah])
-        p(f'Watch data on {len(ah)} night{"s" if len(ah) > 1 else ""}: asleep {np.nanmean(asleep):.1f} h, deep {np.nanmean(deep):.0f} min, REM {np.nanmean(rem):.0f} min, awake {np.nanmean(awake):.0f} min, overnight heart rate {np.nanmean(hr):.0f} bpm'
-          + (f', HRV {np.nanmean(hrv):.0f} ms' if np.isfinite(hrv).any() else '') + (f', Watch SpO2 minimum {np.nanmin(wsp):.0f}%' if np.isfinite(wsp).any() else '') + '.')
-        on = [n for n in ah if np.isfinite(n.apple.get('asleep_h', np.nan))]
-        if on:
-            cov = [100 * min(n.hours, n.apple['asleep_h']) / n.apple['asleep_h'] for n in on if n.apple['asleep_h'] > 0]
-            if cov: p(f'The machine covered about {np.mean(cov):.0f}% of the sleep the Watch recorded. The gap is untreated sleep; closing it is worth more than any pressure change.')
+        st_n = int(np.isfinite(asleep).sum())
+        if st_n:
+            p(f'Watch sleep on {st_n} night{"s" if st_n > 1 else ""}: asleep {np.nanmean(asleep):.1f} h, deep {np.nanmean(deep):.0f} min, REM {np.nanmean(rem):.0f} min, awake {np.nanmean(awake):.0f} min'
+              + (f', overnight heart rate {np.nanmean(hr):.0f} bpm' if np.isfinite(hr).any() else '') + (f', HRV {np.nanmean(hrv):.0f} ms' if np.isfinite(hrv).any() else '') + (f', Watch SpO2 minimum {np.nanmin(wsp):.0f}%' if np.isfinite(wsp).any() else '') + '.')
+        cov = [n.apple['cover_pct'] for n in ah if np.isfinite(n.apple.get('cover_pct', np.nan))]
+        if cov:
+            p(f'The mask was on for about {np.mean(cov):.0f}% of the sleep the Watch recorded (matched minute by minute against the machine sessions). '
+              + ('That is close to full coverage.' if np.mean(cov) >= 90 else 'The rest is untreated sleep; closing that gap is worth more than any pressure change.'))
+        bdn = [n for n in ah if np.isfinite(n.apple.get('bd', np.nan))]
+        if bdn:
+            pairs = '; '.join(f"{n.date:%a %m/%d} Watch {n.apple['bd']:.1f}, machine {n.stats['AHI']:.1f}" for n in bdn if np.isfinite(n.stats.get('AHI', np.nan)))
+            p(f'Watch Breathing Disturbances: {pairs}. The Watch counts breathing interruptions per hour from wrist motion, so it reads differently from the machine, '
+              'which measures airflow at the mask. Use it as a trend across weeks, and as the only check on nights the mask comes off; the machine AHI stays the reference.')
         p('Deep and REM minutes, and a falling overnight heart rate and rising HRV over weeks, are the Watch-side evidence that treated sleep is restorative. Compare nights with the mask on all night against split nights.')
 
     if extra_html: H_.append(extra_html)

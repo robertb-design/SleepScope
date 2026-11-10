@@ -7,7 +7,8 @@ let nights = []; let history = []; let claudeBusy = false; let selectedNight = n
 const store = { get: (k, d) => { try { const v = localStorage.getItem('ss_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem('ss_' + k, JSON.stringify(v)); } catch (e) {} } };
 
 // ---------------------------------------------------------------- navigation
-function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); if (p === 'land' && nights.length) drawLandscape(); }
+function go(p) { document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.id === 'p-' + p)); document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.p === p)); window.scrollTo(0, 0); if (p === 'nights' && nights.length) drawOverview(); if (p === 'land' && nights.length) drawLandscape(); if (p === 'update') updateDay(); if (p === 'ask') refreshAskContext(); }
+function updateDay() { const sun = new Date().getDay() === 0; $('upsunday').style.display = sun ? '' : 'none'; $('upwatch').style.opacity = sun ? '1' : '0.55'; $('upwatchwhen').textContent = sun ? 'Sundays (today)' : 'Sundays (not today)'; }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => go(b.dataset.p));
 
 // ---------------------------------------------------------------- IndexedDB for the last loaded files
@@ -20,9 +21,10 @@ const idb = { db: null,
 async function filesFromInputs(list) {
   const files = {};
   for (const f of list) {
-    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || name.includes('__MACOSX')) continue; if (/\.edf$/i.test(name)) files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); else if (/\.(csv|txt)$/i.test(name)) { const t = await entry.async('string'); if (isCompanion(t)) files['companion/' + name.split('/').pop()] = t; } } }
+    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || name.includes('__MACOSX')) continue; if (/\.edf$/i.test(name)) files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); else if (/(^|\/)\d{14}$/.test(name)) files['companion/raw/' + name.split('/').pop()] = await entry.async('arraybuffer'); else if (/(^|\/)health\.json$/i.test(name)) files['companion/health.json'] = await entry.async('string'); else if (/^about\.txt$/i.test(name)) files['companion/about.txt'] = await entry.async('string'); else if (/\.(csv|txt)$/i.test(name)) { const t = await entry.async('string'); if (isCompanion(t)) files['companion/' + name.split('/').pop()] = t; } } }
     else if (/\.edf$/i.test(f.name)) files[(f.webkitRelativePath || f.name).replace(/\\/g, '/')] = await f.arrayBuffer();
     else if (/\.(csv|txt)$/i.test(f.name)) { const t = await f.text(); if (isCompanion(t)) files['companion/' + f.name] = t; }
+    else if (/^\d{14}$/.test(f.name)) files['companion/raw/' + f.name] = await f.arrayBuffer();
   }
   return files;
 }
@@ -30,7 +32,8 @@ async function filesFromInputs(list) {
 function isCompanion(t) { const h = (t.slice(0, 200).split(/\r?\n/)[0] || '').toLowerCase(); return ((h.includes('oxygen') || h.includes('spo2')) && (h.includes('time') || h.includes('date'))) || /^(sleep|heart rate|blood oxygen),/.test(h); }
 function applyCompanions(files) {
   let oxFiles = 0, oxSessions = 0, health = null;
-  for (const [k, t] of Object.entries(files)) { if (!k.startsWith('companion/') || typeof t !== 'string') continue; const h = t.slice(0, 200).toLowerCase(); if (h.includes('oxygen') || h.includes('spo2')) { const n = SS.importOximeterCsv(t, nights); if (n) { oxFiles++; oxSessions += n; } } else { const d = AH.readShortcutCsv(t); if (d.sleep.length || d.hr.length) health = d; } }
+  for (const [k, t] of Object.entries(files)) { if (k.startsWith('companion/raw/') && t instanceof ArrayBuffer) { const n = SS.importO2RingRaw(t, k.split('/').pop(), nights); if (n) { oxFiles++; oxSessions += n; } continue; } if (!k.startsWith('companion/') || typeof t !== 'string') continue; if (k === 'companion/about.txt') { const t2 = t.trim(), cur = $('about').value.trim(); if (t2 && t2 !== cur && (!cur || cur === store.get('aboutSynced', ''))) { $('about').value = t2; store.set('about', t2); store.set('aboutSynced', t2); } continue; }
+      if (k === 'companion/health.json') { try { const d = AH.fromSync(JSON.parse(t)); if (d.sleep.length || d.bd.length) health = d; } catch (e) {} continue; } const h = t.slice(0, 200).toLowerCase(); if (h.includes('oxygen') || h.includes('spo2')) { const n = SS.importOximeterCsv(t, nights); if (n) { oxFiles++; oxSessions += n; } } else { const d = AH.readShortcutCsv(t); if (d.sleep.length || d.hr.length) health = d; } }
   if (health) appleData = health;
   return { oxFiles, oxSessions, health: !!health };
 }
@@ -38,10 +41,11 @@ function normalise(files) { // flatten to folder/name keyed by the date folder w
   const out = {}; for (const [k, v] of Object.entries(files)) { if (k.startsWith('companion/')) { out[k] = v; continue; } const parts = k.split('/'); const name = parts.pop(); if (/^STR\.edf$/i.test(name)) { out['STR.edf'] = v; continue; } const folder = parts.length ? parts.pop() : (name.match(/^(\d{8})_/) || [, 'x'])[1]; out[folder + '/' + name] = v; } return out;
 }
 async function loadFiles(files, label) {
-  const strKey = Object.keys(files).find(k => /(^|\/)STR\.edf$/i.test(k)); strData = strKey ? SS.readStr(files[strKey]) : null;
+  const strKey = Object.keys(files).find(k => /(^|\/)STR\.edf$/i.test(k)); strData = strKey ? SS.readStr(files[strKey]) : null; SS.setStr(strData);
   const prog = $('progress'); prog.style.display = 'block'; const bar = prog.firstElementChild; $('loadmsg').textContent = 'Reading ' + label + '…';
   const t0 = Date.now();
   nights = await SS.buildSessions(files, (i, n, name) => { bar.style.width = (100 * i / Math.max(n, 1)) + '%'; $('loadmsg').textContent = `Reading ${name} (${i + 1}/${n})`; });
+  if (nights.length) { const extra = SS.summaryNights(strData, nights); if (extra.length) nights = nights.concat(extra).sort((a, b) => (a.date < b.date ? -1 : 1)); }
   const comp = nights.length ? applyCompanions(files) : { oxFiles: 0, oxSessions: 0, health: false };
   for (let i = 0; i < nights.length; i++) { const n = nights[i]; $('loadmsg').textContent = `Scoring ${SS.label(n.date)}`; bar.style.width = (100 * i / nights.length) + '%'; await new Promise(r => setTimeout(r, 0)); for (const s of n.sessions) SS.scoreSession(s); n.stats = SS.nightStats(n); }
   prog.style.display = 'none';
@@ -51,6 +55,7 @@ async function loadFiles(files, label) {
   afterLoad();
 }
 function afterLoad() {
+  setTimeout(() => { try { refreshAskContext(); } catch (e) {} }, 0);
   const last = nights[nights.length - 1];
   $('hdrsub').textContent = `${nights.length} nights · last ${SS.label(last.date)} · AHI ${last.stats.AHI.toFixed(1)}`;
   $('st1').textContent = `✔ ${nights.length} nights`; $('st1').className = 'status ok'; $('st2').textContent = '✔ Ready'; $('st2').className = 'status ok'; $('st3').textContent = '✔ Ready'; $('st3').className = 'status ok';
@@ -62,7 +67,16 @@ function afterLoad() {
   renderSynopsis(); fillNightTable(); if ($('p-nights').classList.contains('active')) drawOverview();
   if (autoOpenSynopsis) { autoOpenSynopsis = false; go('syn'); }
 }
-$('filein').onchange = async (e) => { const list = [...e.target.files]; if (!list.length) return; try { const files = normalise(await filesFromInputs(list)); await loadFiles(files, list.length === 1 ? list[0].name : list.length + ' files'); try { await idb.put('last', { files, label: list.length === 1 ? list[0].name : list.length + ' files', when: Date.now() }); } catch (err) {} } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
+// One button takes everything: the card zip, ring CSVs, the Health file, in any combination. A pick with no card files
+// (say just last night's ring CSV) is added to the card already loaded instead of replacing it, and all of it is remembered.
+async function addFiles(list, label) {
+  let files = normalise(await filesFromInputs(list)); const hasCard = Object.keys(files).some(k => /\.edf$/i.test(k));
+  if (!hasCard) { let last = null; try { last = await idb.get('last'); } catch (err) {}
+    if (!last || !last.files) { $('loadmsg').textContent = 'Load the card zip first; ring and Health files are added to it.'; return; }
+    files = Object.assign({}, last.files, files); label = last.label + ' + ' + label; }
+  await loadFiles(files, label); try { await idb.put('last', { files, label, when: Date.now() }); } catch (err) {}
+}
+$('filein').onchange = async (e) => { const list = [...e.target.files]; if (!list.length) return; try { await addFiles(list, list.length === 1 ? list[0].name : list.length + ' files'); } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
 $('samplebtn').onclick = async () => { $('loadmsg').textContent = 'Fetching sample card…'; try { const r = await fetch('sample.zip'); const z = await JSZip.loadAsync(await r.arrayBuffer()); const files = {}; for (const [name, entry] of Object.entries(z.files)) if (!entry.dir && /\.edf$/i.test(name)) files[name] = await entry.async('arraybuffer'); await loadFiles(normalise(files), 'sample card'); } catch (e) { $('loadmsg').textContent = 'Sample not available offline yet: ' + e; } };
 let appleData = null;
 $('applein').onchange = async (e) => {
@@ -72,12 +86,12 @@ $('applein').onchange = async (e) => {
     if (/\.(zip|xml)$/i.test(f.name)) appleData = await AH.readExport(f, since, (b, t) => { $('applemsg').textContent = `Scanning ${f.name}: ${(b / 1048576).toFixed(0)} MB read`; });
     else appleData = AH.readShortcutCsv(await f.text());
     const n = AH.attach(appleData, nights); try { await idb.put('apple', AH.pack(appleData)); } catch (err) {}
-    $('applemsg').textContent = `${appleData.sleep.length.toLocaleString()} sleep records, ${appleData.hr.length.toLocaleString()} heart rate, ${appleData.spo2.length.toLocaleString()} SpO2 samples. Matched to ${n} of ${nights.length} nights.`;
+    $('applemsg').textContent = `${appleData.sleep.length.toLocaleString()} sleep records, ${appleData.hr.length.toLocaleString()} heart rate, ${appleData.spo2.length.toLocaleString()} SpO2 samples. ${(appleData.bd || []).length} breathing disturbance nights. Matched to ${n} of ${nights.length} nights.`; fillNightTable(); renderSynopsis();
     $('st6').textContent = n ? '✔ Watch data present' : 'No matching nights'; $('st6').className = 'status' + (n ? ' ok' : ''); renderSynopsis(); if ($('p-nights').classList.contains('active')) drawOverview();
   } catch (err) { $('applemsg').textContent = 'Could not read that: ' + err.message; }
   e.target.value = '';
 };
-$('oxin').onchange = async (e) => { const f = e.target.files[0]; if (!f || !nights.length) return; const n = SS.importOximeterCsv(await f.text(), nights); for (const nt of nights) nt.stats = SS.nightStats(nt); afterLoad(); alert(`SpO2 attached to ${n} session(s) by timestamp.`); e.target.value = ''; };
+$('oxin').onchange = async (e) => { const list = [...e.target.files]; if (!list.length || !nights.length) return; try { await addFiles(list, list.map(f => f.name).join(', ')); } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
 
 // ---------------------------------------------------------------- synopsis
 function quick(days) { if (!nights.length) return; const last = nights[nights.length - 1].date; $('d1').value = last; $('d0').value = days ? (nights.find(n => n.date >= addDays(last, -(days - 1))) || nights[0]).date : nights[0].date; renderSynopsis(); }
@@ -93,11 +107,14 @@ function renderSynopsis() {
 ['d0', 'd1', 'diag'].forEach(id => $(id).onchange = renderSynopsis);
 
 function appleSection(a, b) {
-  const ah = nights.filter(n => n.date >= a && n.date <= b && n.apple); if (!ah.length) return '';
+  const ah = nights.filter(n => n.date >= a && n.date <= b && n.apple); const wAll = nights.filter(n => n.apple);
+  if (!ah.length) return wAll.length ? `<h3>Apple Watch</h3><p>No Watch sleep on the nights shown. The last night with Watch data is ${new Date(wAll[wAll.length - 1].date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: '2-digit', day: '2-digit' }).replace(',', '')}; set the range to include it, or tap it in Nights. Wear the Watch to bed with Sleep tracking on and the next export fills these nights in.</p>` : '';
   const m = (k) => { const v = ah.map(n => n.apple[k]).filter(Number.isFinite); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : NaN; };
   const mn = (k) => { const v = ah.map(n => n.apple[k]).filter(Number.isFinite); return v.length ? Math.min(...v) : NaN; };
-  let t = `<h3>Apple Watch</h3><p>Watch data on ${ah.length} night${ah.length > 1 ? 's' : ''}: asleep ${m('asleep_h').toFixed(1)} h, deep ${m('deep_min').toFixed(0)} min, REM ${m('rem_min').toFixed(0)} min, awake ${m('awake_min').toFixed(0)} min, overnight heart rate ${m('hr_mean').toFixed(0)} bpm` + (Number.isFinite(m('hrv')) ? `, HRV ${m('hrv').toFixed(0)} ms` : '') + (Number.isFinite(mn('spo2_min')) ? `, Watch SpO2 minimum ${mn('spo2_min').toFixed(0)}%` : '') + '.</p>';
-  const cov = ah.filter(n => n.apple.asleep_h > 0).map(n => 100 * Math.min(n.hours, n.apple.asleep_h) / n.apple.asleep_h); if (cov.length) t += `<p>The machine covered about ${(cov.reduce((x, y) => x + y, 0) / cov.length).toFixed(0)}% of the sleep the Watch recorded. The gap is untreated sleep; closing it is worth more than any pressure change.</p>`;
+  const stN = ah.filter(n => Number.isFinite(n.apple.asleep_h)).length; let t = '<h3>Apple Watch</h3>';
+  if (stN) t += `<p>Watch sleep on ${stN} night${stN > 1 ? 's' : ''}: asleep ${m('asleep_h').toFixed(1)} h, deep ${m('deep_min').toFixed(0)} min, REM ${m('rem_min').toFixed(0)} min, awake ${m('awake_min').toFixed(0)} min` + (Number.isFinite(m('hr_mean')) ? `, overnight heart rate ${m('hr_mean').toFixed(0)} bpm` : '') + (Number.isFinite(m('hrv')) ? `, HRV ${m('hrv').toFixed(0)} ms` : '') + (Number.isFinite(mn('spo2_min')) ? `, Watch SpO2 minimum ${mn('spo2_min').toFixed(0)}%` : '') + '.</p>';
+  const cov = ah.map(n => n.apple.cover_pct).filter(Number.isFinite); if (cov.length) { const c = cov.reduce((x, y) => x + y, 0) / cov.length; t += `<p>The mask was on for about ${c.toFixed(0)}% of the sleep the Watch recorded (matched minute by minute against the machine sessions). ${c >= 90 ? 'That is close to full coverage.' : 'The rest is untreated sleep; closing that gap is worth more than any pressure change.'}</p>`; }
+  const bdn = ah.filter(n => Number.isFinite(n.apple.bd) && Number.isFinite(n.stats.AHI)); if (bdn.length) t += `<p>Watch Breathing Disturbances: ${bdn.map(n => `${new Date(n.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: '2-digit', day: '2-digit' }).replace(',', '')} Watch ${n.apple.bd.toFixed(1)}, machine ${n.stats.AHI.toFixed(1)}`).join('; ')}. The Watch counts breathing interruptions per hour from wrist motion, so it reads differently from the machine, which measures airflow at the mask. Use it as a trend across weeks, and as the only check on nights the mask comes off; the machine AHI stays the reference.</p>`;
   return t;
 }
 // ---------------------------------------------------------------- charts
@@ -107,30 +124,33 @@ function drawOverview() {
   Plotly.react('ch-usage', [{ type: 'bar', x, y: nights.map(n => +n.hours.toFixed(2)), marker: { color: C.blue }, name: 'Hours' }], { title: { text: 'Usage (hours), dashed = 4 h', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 4, y1: 4, line: { dash: 'dash', color: '#52514e', width: 1 } }], yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } } }, { displayModeBar: false, responsive: true });
   Plotly.react('ch-ahi', [
     { type: 'bar', x, y: S.map(s => +s.AHI.toFixed(2)), marker: { color: C.blue }, name: 'AHI machine' },
-    { type: 'bar', x, y: S.map(s => +s.app_AHI.toFixed(2)), marker: { color: C.orange }, name: 'AHI app (flow only)' }],
+    { type: 'bar', x, y: S.map(s => +s.app_AHI.toFixed(2)), marker: { color: C.orange }, name: 'AHI app (rechecked)' }],
     { title: { text: 'AHI per night, dashed = 5', font: { size: 13 } }, barmode: 'group', margin: { l: 34, r: 10, t: 30, b: 60 }, legend: { orientation: 'h', y: -0.35, font: { size: 10 } }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 5, y1: 5, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
   Plotly.react('ch-leak', [{ type: 'bar', x, y: S.map(s => +s.leak_95.toFixed(1)), marker: { color: S.map(s => s.leak_95 > 24 ? C.red : C.aqua) }, name: 'Leak 95th' }],
     { title: { text: 'Leak, 95th percentile (L/min), dashed = 24', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 24, y1: 24, line: { dash: 'dash', color: C.red, width: 1 } }] }, { displayModeBar: false, responsive: true });
 }
 function fillNightTable() {
   const tb = $('nighttbl').tBodies[0]; tb.innerHTML = '';
-  nights.forEach((n, i) => { const s = n.stats; const tr = document.createElement('tr'); tr.innerHTML = `<td>${SS.label(n.date)}</td><td>${n.hours.toFixed(2)}</td><td>${SS.pressureLabel(s)}</td><td>${s.AHI.toFixed(2)}</td><td>${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(1) : ''}</td><td>${Number.isFinite(s.press_95) ? s.press_95.toFixed(1) : ''}</td>`; tr.onclick = () => showNight(i); tb.appendChild(tr); });
+  nights.forEach((n, i) => { const s = n.stats; const tr = document.createElement('tr'); tr.innerHTML = `<td>${SS.label(n.date)}</td><td>${n.hours.toFixed(2)}</td><td>${SS.pressureLabel(s)}</td><td>${s.AHI.toFixed(2)}</td><td>${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(1) : ''}</td><td>${Number.isFinite(s.press_95) ? s.press_95.toFixed(1) : ''}</td><td>${Number.isFinite(s.w_bd) ? s.w_bd.toFixed(1) : ''}</td>`; tr.onclick = () => showNight(i); tb.appendChild(tr); });
 }
 function showNight(i) {
   const n = nights[i]; const s = n.stats; selectedNight = n; $('landmode').value = 'night'; document.querySelectorAll('#nighttbl tbody tr').forEach((tr, k) => tr.classList.toggle('sel', k === i));
   const box = $('nightdetail'); box.innerHTML = `<div class="card"><h3 style="margin:0 0 6px">${new Date(n.date + 'T12:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3>
-    <div class="row" style="gap:6px"><button style="--c:#6250d6;padding:4px 10px;font-size:12px" onclick="go('land')">View in 3D</button><span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span><span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span><span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}</div>
+    <div class="row" style="gap:6px"><button style="--c:#6250d6;padding:4px 10px;font-size:12px" onclick="go('land')">View in 3D</button><span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span><span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span><span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}${Number.isFinite(s.w_asleep) ? `<span class="pill" style="background:#eda100">Watch asleep ${s.w_asleep.toFixed(1)} h${Number.isFinite(s.w_cover) ? ' · mask on ' + s.w_cover.toFixed(0) + '%' : ''}</span>` : ''}${Number.isFinite(s.w_bd) ? `<span class="pill" style="background:#eda100">Watch BD ${s.w_bd.toFixed(1)}</span>` : ''}</div>
     <div class="hl">SETTINGS &nbsp; ${SS.settingsText(SS.settingsSummary([n], strData))}</div><p class="muted" style="margin:8px 0 0">Sessions: ${n.sessions.map(x => { const pr = x.ch.Press; if (!pr || !pr.length) return SS.fmtTime(x.start); const skip = Math.max(Math.floor(pr.length * 0.15), Math.min(900, pr.length >> 1)); const t = pr.subarray(skip); let m = 0; for (const v of t) m += v; m /= t.length || 1; let sd = 0; for (const v of t) sd += (v - m) ** 2; sd = Math.sqrt(sd / (t.length || 1)); let lo = Infinity, hi = -Infinity; for (const v of pr) { if (v < lo) lo = v; if (v > hi) hi = v; } return `${SS.fmtTime(x.start)} (${sd < 0.05 ? 'CPAP ' + hi.toFixed(0) : lo.toFixed(0) + ' to ' + hi.toFixed(0)})`; }).join(', ')}. OA ${s.OA}, CA ${s.CA}, H ${s.H}, arousals ${s.arousals}. RR ${s.rr_med.toFixed(0)}, Vt ${s.tv_med.toFixed(0)} mL, MV ${s.mv_med.toFixed(1)}.</p></div>
     <div class="card"><div id="ch-night" style="width:100%;height:${520 + (Number.isFinite(s.spo2_mean) ? 100 : 0) + (n.apple && n.apple.stages.length ? 200 : 0)}px"></div><div class="key"><span><i style="background:${C.red}"></i>obstructive</span><span><i style="background:${C.violet}"></i>central</span><span><i style="background:${C.orange}"></i>hypopnea</span><span><i style="background:${C.amber}"></i>arousal</span><span>lighter bands = app events</span></div></div>
     <div class="card"><details><summary>What these panels mean, what stands out tonight, what to improve</summary><div id="ntexplain"></div></details></div>
     <div class="card"><b>Events</b> <span class="muted">(tap one to see the airflow around it)</span><div id="evlist"></div></div><div class="card" id="zoomcard" style="display:none"><div id="ch-zoom" style="width:100%;height:240px"></div><div class="muted" id="zoomnote"></div></div>`;
   box.scrollIntoView({ behavior: 'smooth' }); $('ntexplain').innerHTML = EX.night(n);
+  if (n.summary_only) box.insertAdjacentHTML('afterbegin', `<div class="card" style="border-left:6px solid #8f9bb3"><b>Card was out this night.</b> Only the machine's own summary exists: ${n.hours.toFixed(1)} h, AHI ${Number.isFinite(s.AHI) ? s.AHI.toFixed(2) : '?'} (obstructive ${s.OA}, central ${s.CA}, hypopnea ${s.H}), leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'} L/min, pressure 95th ${Number.isFinite(s.press_95) ? s.press_95.toFixed(1) : '?'}. No breath detail was recorded, so the panels below are empty except for ring data.</div>`);
   const t0 = n.sessions[0].start; const tr = []; const shapes = [];
   const series = (k, sc, name, color, yaxis) => { const xs = [], ys = []; for (const ses of n.sessions) { const a = ses.ch[k]; if (!a) continue; for (let i = 0; i < a.length; i++) { xs.push(new Date(ses.start.getTime() + 2000 * i)); ys.push(a[i] * sc); } xs.push(null); ys.push(null); } if (xs.length) tr.push({ x: xs, y: ys, mode: 'lines', line: { color, width: 1 }, name, yaxis, hoverinfo: 'x+y+name' }); };
   series('Press', 1, 'Set pressure', C.blue, 'y'); series('MaskPress', 1, 'Mask pressure', C.aqua, 'y'); series('Leak', 60, 'Leak L/min', C.orange, 'y2'); series('FlowLim', 1, 'Flow limitation', C.violet, 'y3'); series('Snore', 1, 'Snore', '#e87ba4', 'y3'); series('TidVol', 1000, 'Tidal volume mL', C.green, 'y4');
   for (const ses of n.sessions) if (ses.vent) { const xs = [], ys = []; for (let i = 0; i < ses.vent.length; i += 2) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.vent[i]); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.aqua, width: 1 }, name: 'Ventilation vs baseline', yaxis: 'y5' }); }
   const hasOx = n.sessions.some(x => x.hasOx); const hasAp = !!(n.apple && (n.apple.stages.length || n.apple.hr.length));
-  if (hasOx) for (const ses of n.sessions) if (ses.spo2) { const xs = [], ys = [], yp = []; for (let i = 0; i < ses.spo2.length; i += 5) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.spo2[i] > 0 ? ses.spo2[i] : null); yp.push(ses.pulse && ses.pulse[i] > 0 ? ses.pulse[i] : null); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.red, width: 1 }, name: 'SpO2 %', yaxis: 'y6' }); tr.push({ x: xs, y: yp, mode: 'lines', line: { color: C.orange, width: 1 }, name: 'Pulse', yaxis: 'y6' }); }
+  if (hasOx) for (const ses of n.sessions) if (ses.spo2) { const xs = [], ys = [], yp = []; for (let i = 0; i < ses.spo2.length; i += 5) { xs.push(new Date(ses.start.getTime() + 1000 * i)); ys.push(ses.spo2[i] > 0 ? ses.spo2[i] : null); yp.push(ses.pulse && ses.pulse[i] > 0 ? ses.pulse[i] : null); } tr.push({ x: xs, y: ys, mode: 'lines', line: { color: C.red, width: 1 }, name: 'SpO2 %', yaxis: 'y6' }); tr.push({ x: xs, y: yp, mode: 'lines', line: { color: C.orange, width: 1 }, name: 'Pulse', yaxis: 'y9' });
+    if (ses.motion) { const ym = []; for (let i = 0; i < ses.spo2.length; i += 5) ym.push(ses.motion[i] >= 0 ? 80 + Math.min(100, ses.motion[i]) * 0.08 : null); tr.push({ x: xs, y: ym, mode: 'lines', fill: 'tozeroy', line: { color: '#0e9aa7', width: 1 }, fillcolor: 'rgba(14,154,167,0.25)', name: 'Motion', yaxis: 'y6' }); }
+    for (const at of ses.oxAlerts || []) shapes.push({ type: 'line', xref: 'x', yref: 'y6', x0: at, x1: at, y0: 80, y1: 100, line: { color: C.red, width: 1, dash: 'dot' } }); }
   for (const ses of n.sessions) for (const e of [...ses.machine, ...ses.app]) { const col = EVC[e.label]; if (!col) continue; shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: e.start, x1: new Date(e.start.getTime() + Math.max(e.dur, 20) * 1000), y0: 0, y1: 1, fillcolor: col, opacity: e.source === 'machine' ? 0.35 : 0.15, line: { width: 0 } }); }
   if (hasAp) {
     const ord = { InBed: 0, Deep: 1, Core: 2, Asleep: 2, REM: 3, Awake: 4 }; const cols = { InBed: '#d9d8d3', Deep: '#0f6e4f', Core: C.blue, Asleep: C.blue, REM: C.violet, Awake: C.orange };
@@ -141,9 +161,14 @@ function showNight(i) {
   const nrows = (hasOx ? 6 : 5) + (hasAp ? 2 : 0); const dom = (k) => { const h = 1 / nrows, gap = 0.035; return [1 - (k + 1) * h + gap, 1 - k * h - gap / 2]; };
   const layout = { margin: { l: 36, r: 10, t: 10, b: 30 }, showlegend: false, shapes, hovermode: 'x', dragmode: 'pan', xaxis: { type: 'date', tickformat: '%H:%M' },
     yaxis: { domain: dom(0), title: { text: 'cmH2O', font: { size: 10 } }, range: [0, 21] }, yaxis2: { domain: dom(1), title: { text: 'leak', font: { size: 10 } }, range: [0, 60] }, yaxis3: { domain: dom(2), title: { text: 'FL', font: { size: 10 } }, range: [0, 1] }, yaxis4: { domain: dom(3), title: { text: 'Vt', font: { size: 10 } }, range: [0, 1200] }, yaxis5: { domain: dom(4), title: { text: 'vent', font: { size: 10 } }, range: [0, 2.5] } };
-  if (hasOx) layout.yaxis6 = { domain: dom(5), title: { text: 'SpO2', font: { size: 10 } }, range: [80, 100] };
+  if (hasOx) { layout.yaxis6 = { domain: dom(5), title: { text: 'SpO2', font: { size: 10 } }, range: [80, 100] }; layout.yaxis9 = { overlaying: 'y6', side: 'right', range: [40, 120], showgrid: false, title: { text: 'bpm', font: { size: 10 } } }; }
   if (hasAp) { const k = hasOx ? 6 : 5; layout['yaxis' + (k + 1)] = { domain: dom(k), tickvals: [0, 1, 2, 3, 4], ticktext: ['bed', 'deep', 'core', 'REM', 'wake'], range: [-0.6, 4.6], tickfont: { size: 9 } }; layout['yaxis' + (k + 2)] = { domain: dom(k + 1), title: { text: 'Watch', font: { size: 10 } }, range: [40, 110] }; }
   Plotly.newPlot('ch-night', tr, layout, { displayModeBar: false, responsive: true, scrollZoom: true });
+  const capLines = ['<b>Pressure</b> (top): what the machine delivered. A line pinned flat at the top means it wanted more.', '<b>Leak</b>: air escaping from the mask. Spikes over 24 mean the seal broke.', '<b>FL</b>, flow limitation: how flattened each breath was, 0 round to 1 flat. Bursts mean the airway was sagging.', '<b>Vt</b>, breath size: steady is good; drops line up with events.', '<b>Vent</b>: each breath against your recent normal. Dips are shallow breathing. Shaded bands are events.'];
+  if (hasOx) capLines.push('<b>SpO2</b> (red, left scale): blood oxygen from the ring, 94 and up is normal. <b>Pulse</b> (orange, right scale): sudden jumps are brief wake ups. <b>Motion</b> (teal fill): hand movement; oxygen dips during it are often the sensor.');
+  if (hasAp) capLines.push('<b>Watch</b>: sleep stage from the Apple Watch.');
+  let capEl = document.getElementById('nightcap'); if (!capEl) { capEl = document.createElement('div'); capEl.id = 'nightcap'; capEl.className = 'cap'; document.getElementById('ch-night').after(capEl); }
+  capEl.innerHTML = capLines.map(l => `<div style="margin-bottom:4px">${l}</div>`).join('');
   const ev = n.sessions.flatMap(ses => [...ses.machine, ...ses.app].map(e => ({ e, ses }))).sort((a, b) => a.e.start - b.e.start).filter(x => x.e.label !== 'Flow Limitation Run' || x.e.dur >= 60);
   const list = $('evlist'); list.innerHTML = ev.length ? '' : '<p class="muted">No events.</p>';
   for (const { e, ses } of ev) { const d = document.createElement('div'); d.className = 'evt'; d.innerHTML = `<span class="t">${SS.fmtTime(e.start)}:${String(e.start.getSeconds()).padStart(2, '0')}</span><span class="pill" style="background:${EVC[e.label] || C.grey}">${e.source}</span><span class="l">${e.label} ${e.dur ? e.dur.toFixed(0) + ' s' : ''}<br><span class="muted">${e.detail}</span></span>`; d.onclick = () => zoomEvent(ses, e); list.appendChild(d); }
@@ -162,10 +187,10 @@ function zoomEvent(ses, e) {
 const LB = { bin: 120, t0: 19, t1: 33, Z: 6 }; LB.n = (LB.t1 - LB.t0) * 3600 / LB.bin;
 let landCam = 'over';
 function nightGrids(n) {
-  const W = LB.n; const op = new Array(W).fill(NaN), lk = new Array(W).fill(NaN), pr = new Array(W).fill(NaN), sp = new Array(W).fill(NaN);
+  const W = LB.n; const op = new Array(W).fill(NaN), lk = new Array(W).fill(NaN), pr = new Array(W).fill(NaN), sp = new Array(W).fill(NaN), hr = new Array(W).fill(NaN), hx = new Array(W).fill(NaN), mo = new Array(W).fill(NaN);
   const [y, m, d] = n.date.split('-').map(Number); const base = new Date(y, m - 1, d, LB.t0, 0, 0).getTime();
   for (const s of n.sessions) {
-    if (s.spo2 && s.spo2.length) for (let i1 = 0; i1 < s.spo2.length; i1 += LB.bin) { const b = Math.floor((s.start.getTime() + 1000 * i1 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; let mn = Infinity; for (let k = i1; k < Math.min(i1 + LB.bin, s.spo2.length); k++) if (s.spo2[k] > 0 && s.spo2[k] < mn) mn = s.spo2[k]; if (mn < Infinity) sp[b] = Number.isNaN(sp[b]) ? mn : Math.min(sp[b], mn); }
+    if (s.spo2 && s.spo2.length) for (let i1 = 0; i1 < s.spo2.length; i1 += LB.bin) { const b = Math.floor((s.start.getTime() + 1000 * i1 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; let mn = Infinity; for (let k = i1; k < Math.min(i1 + LB.bin, s.spo2.length); k++) if (s.spo2[k] > 0 && s.spo2[k] < mn) mn = s.spo2[k]; if (mn < Infinity) sp[b] = Number.isNaN(sp[b]) ? mn : Math.min(sp[b], mn); if (s.pulse) { let t = 0, c = 0, mx = 0; for (let k = i1; k < Math.min(i1 + LB.bin, s.pulse.length); k++) if (s.pulse[k] > 30 && s.pulse[k] < 200) { t += s.pulse[k]; c++; if (s.pulse[k] > mx) mx = s.pulse[k]; } if (c) { hr[b] = t / c; hx[b] = mx; } } if (s.motion) { let mm = -1; for (let k = i1; k < Math.min(i1 + LB.bin, s.motion.length); k++) if (s.motion[k] > mm) mm = s.motion[k]; if (mm >= 0) mo[b] = Number.isNaN(mo[b]) ? mm : Math.max(mo[b], mm); } }
     const fl = s.ch.FlowLim, leak = s.ch.Leak, press = s.ch.Press, vr = s.vent; const n2 = fl ? fl.length : (press ? press.length : 0); const step = LB.bin / 2;
     for (let i2 = 0; i2 < n2; i2 += step) {
       const b = Math.floor((s.start.getTime() + 2000 * i2 - base) / 1000 / LB.bin); if (b < 0 || b >= W) continue; const j = Math.min(i2 + step, n2);
@@ -176,7 +201,7 @@ function nightGrids(n) {
       if (press) { let a = 0; for (let k = i2; k < j; k++) a += press[k]; pr[b] = a / (j - i2); }
     }
   }
-  return { op, lk, pr, sp, base };
+  return { op, lk, pr, sp, hr, hx, mo, base };
 }
 function drawLandscape() {
   if (!nights.length) return; const mode = $('landmode').value; let sel;
@@ -188,10 +213,12 @@ function drawLandscape() {
   const scale = [[0, '#c9c8c3'], [0.165, '#c9c8c3'], [0.1667, '#e34948'], [0.5, '#eda100'], [1, '#1baf7a']]; // value -0.2 .. 1 : grey floor then red->yellow->green
   const pil = { 'Obstructive Apnea': { x: [], y: [], z: [], c: C.red }, 'Central Apnea': { x: [], y: [], z: [], c: C.violet }, 'Hypopnea': { x: [], y: [], z: [], c: C.orange } };
   sel.forEach((n, k) => {
-    const { op, lk, pr, sp, base } = nightGrids(n); const y0 = k * gap; landGrids[k] = { op, lk, pr, sp, base, n };
+    const { op, lk, pr, sp, hr, hx, mo, base } = nightGrids(n); const y0 = k * gap; landGrids[k] = { op, lk, pr, sp, hr, hx, mo, base, n };
     const z = op.map(v => Number.isNaN(v) ? -0.15 * LB.Z : Math.min(1, Math.max(0, v)) * LB.Z); const col = op.map(v => Number.isNaN(v) ? -0.2 : Math.min(1, Math.max(0, v)));
     const zz = z.map((v, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(W - 1, i + 2); j++) { a += z[j]; c++; } return a / c; });
     traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zz, zz, zz], surfacecolor: [col, col, col], colorscale: scale, cmin: -0.2, cmax: 1, showscale: false, hoverinfo: 'none', lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 }, name: SS.label(n.date), meta: { kind: 'terrain', k } });
+    if (n.summary_only) { const zs = xs.map((_, i) => { const t = base + i * LB.bin * 1000; return n.sessions.some(se => t >= se.start.getTime() - LB.bin * 1000 && t <= se.start.getTime() + se.duration * 1000) ? 0.45 * LB.Z : null; });
+      traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zs, zs, zs], surfacecolor: [zs.map(() => 0), zs.map(() => 0), zs.map(() => 0)], colorscale: [[0, '#8f9bb3'], [1, '#8f9bb3']], showscale: false, hoverinfo: 'none', opacity: 1, name: 'card out', meta: { kind: 'summary', k } }); }
     const zw = lk.map(v => v > 24 ? 0.55 * LB.Z : null); if (zw.some(v => v !== null)) traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2, y0, y0 + sw / 2], z: [zw, zw, zw], surfacecolor: [zw.map(() => 1), zw.map(() => 1), zw.map(() => 1)], colorscale: [[0, '#2a78d6'], [1, '#2a78d6']], showscale: false, opacity: 0.6, hoverinfo: 'none', meta: { kind: 'water', k } });
     const px = [], pz = []; pr.forEach((v, i) => { if (!Number.isNaN(v)) { px.push(xs[i]); pz.push(LB.Z * (1.15 + (v - 4) / 12)); } else { px.push(null); pz.push(null); } });
     traces.push({ type: 'scatter3d', mode: 'lines', x: px, y: px.map(() => y0), z: pz, line: { color: '#c026d3', width: 5 }, hoverinfo: 'none', name: 'pressure', meta: { kind: 'pressure', k } });
@@ -200,6 +227,13 @@ function drawLandscape() {
       sp.forEach((v, i) => { if (Number.isNaN(v)) { ox.push(null); oz.push(null); oc.push('#1baf7a'); return; } const z = LB.Z * (1.9 + (Math.min(100, Math.max(85, v)) - 85) / 15 * 0.7); ox.push(xs[i]); oz.push(z); oc.push(v < 90 ? C.red : v < 94 ? '#eda100' : '#1baf7a'); if (v < 90) { dx.push(xs[i]); dz.push(z); } });
       traces.push({ type: 'scatter3d', mode: 'lines', x: ox, y: ox.map(() => yo), z: oz, line: { color: oc, width: 4 }, hoverinfo: 'none', name: 'SpO2', meta: { kind: 'spo2', k } });
       if (dx.length) traces.push({ type: 'scatter3d', mode: 'markers', x: dx, y: dx.map(() => yo), z: dz, marker: { color: C.red, size: 4 }, hoverinfo: 'none', meta: { kind: 'spo2', k } });
+    }
+    if (hr.some(v => !Number.isNaN(v))) {
+      const px2 = [], pz2 = []; const yh = y0 + sw / 2 + 1.9;
+      hr.forEach((v, i) => { if (Number.isNaN(v)) { px2.push(null); pz2.push(null); } else { px2.push(xs[i]); pz2.push(LB.Z * (1.2 + (Math.min(120, Math.max(40, v)) - 40) / 80)); } });
+      traces.push({ type: 'scatter3d', mode: 'lines', x: px2, y: px2.map(() => yh), z: pz2, line: { color: '#0e9aa7', width: 3 }, hoverinfo: 'none', name: 'pulse', meta: { kind: 'pulse', k } });
+      const mx2 = [], mz2 = []; hr.forEach((v, i) => { if (!Number.isNaN(v) && mo[i] >= 30) { mx2.push(xs[i]); mz2.push(LB.Z * (1.2 + (Math.min(120, Math.max(40, v)) - 40) / 80) + 0.08 * LB.Z); } });
+      if (mx2.length) traces.push({ type: 'scatter3d', mode: 'markers', x: mx2, y: mx2.map(() => yh), z: mz2, marker: { color: '#52514e', size: 3 }, hoverinfo: 'none', meta: { kind: 'motion', k } });
     }
     if (n.apple && n.apple.stages.length) {
       const stageCol = { Deep: 0.1, Core: 0.35, Asleep: 0.35, REM: 0.6, Awake: 0.85, InBed: 1.0 }; const rib = new Array(W).fill(null); const rc = new Array(W).fill(0);
@@ -228,9 +262,12 @@ function landClick(ev) {
     const g = landGrids[meta.k]; if (!g) return; const i = Math.min(LB.n - 1, Math.max(0, Math.round(p.x / 0.25)));
     const time = hm(new Date(g.base + i * LB.bin * 1000)), night = SS.label(g.n.date);
     const op = g.op[i], lk = Number.isNaN(g.lk[i]) ? 0 : g.lk[i], pr = Number.isNaN(g.pr[i]) ? null : g.pr[i];
-    if (meta.kind === 'terrain') html = Number.isNaN(op) ? EX.point('floor', { night, time }) : EX.point('terrain', { night, time, openness: Math.min(1, Math.max(0, op)), leak: lk, press: pr });
+    if (meta.kind === 'summary') { const st = g.n.stats; html = EX.point('summary', { night, hours: g.n.hours, AHI: st.AHI, OA: st.OA, CA: st.CA, H: st.H, leak_95: st.leak_95, press_95: st.press_95, setting: SS.pressureLabel(st), exact: g.n.str_summary && g.n.str_summary.exact }); }
+    else if (meta.kind === 'terrain') html = Number.isNaN(op) ? EX.point('floor', { night, time }) : EX.point('terrain', { night, time, openness: Math.min(1, Math.max(0, op)), leak: lk, press: pr });
     else if (meta.kind === 'water') html = EX.point('water', { night, time, leak: lk });
     else if (meta.kind === 'pressure') html = EX.point('pressure', { night, time, press: pr ?? 0 });
+    else if (meta.kind === 'motion') html = EX.point('motion', { night, time, motion: g.mo[i], pulse: Number.isNaN(g.hr[i]) ? null : g.hr[i], spo2: Number.isNaN(g.sp[i]) ? null : g.sp[i] });
+    else if (meta.kind === 'pulse') html = EX.point('pulse', { night, time, pulse: g.hr[i], pulse_max: g.hx[i], spo2: Number.isNaN(g.sp[i]) ? null : g.sp[i], openness: Number.isNaN(op) ? null : op });
     else if (meta.kind === 'spo2') html = EX.point('spo2', { night, time, spo2: g.sp[i], press: pr, openness: Number.isNaN(op) ? null : op });
     else if (meta.kind === 'stage') html = EX.point('stage', { night, time, stage: (landStages[meta.k] || [])[i] || 'Asleep' });
   }
@@ -243,7 +280,7 @@ function landView(v) { landCam = v; drawLandscape(); }
 const SYSTEM = `You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data. Give plain, direct, well-reasoned answers with no filler. Use the numbers in the CONTEXT block; do not invent data. Say when something is not in the data and what would answer it. Pressure settings are prescribed: discuss trade-offs and what to raise with the prescriber rather than instructing changes. Never use dashes in prose. Keep answers tight.`;
 function buildContext(a, b) {
   const sel = nights.filter(n => n.date >= a && n.date <= b); const diag = parseFloat($('diag').value) || null;
-  const syn = $('syntext').innerText; const cols = ['date', 'hours', 'mode', 'AHI', 'OA', 'CA', 'H', 'arousals', 'app_AHI', 'app_unflagged', 'press_min', 'press_med', 'press_95', 'press_max', 'press_at_max_pct', 'leak_med', 'leak_95', 'leak_pct_large', 'flowlim_95', 'flowlim_minutes', 'rr_med', 'tv_med', 'mv_med', 'spo2_mean', 'spo2_min', 'spo2_pct_lt90', 'ODI'];
+  const syn = (SS.synopsis(nights, a, b, diag) + appleSection(a, b)).replace(/<\/(p|h3|h4|li|div)>/g, '\n').replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); const cols = ['date', 'hours', 'mode', 'AHI', 'OA', 'CA', 'H', 'arousals', 'app_AHI', 'app_unflagged', 'press_min', 'press_med', 'press_95', 'press_max', 'press_at_max_pct', 'leak_med', 'leak_95', 'leak_pct_large', 'flowlim_95', 'flowlim_minutes', 'rr_med', 'tv_med', 'mv_med', 'spo2_mean', 'spo2_min', 'spo2_pct_lt90', 'ODI', 'w_bd', 'w_asleep', 'w_cover', 'w_deeprem', 'w_hrv'];
   const fmt = (v) => typeof v === 'number' ? (Number.isFinite(v) ? +v.toFixed(2) : '') : v;
   const table = [cols.join('\t'), ...sel.map(n => cols.map(c => fmt(n.stats[c])).join('\t'))].join('\n');
   const evs = []; for (const n of sel) for (const s of n.sessions) for (const e of [...s.machine, ...s.app].sort((x, y) => x.start - y.start)) { if (e.label === 'Flow Limitation Run') continue; const i2 = Math.max(0, Math.floor((e.start - s.start) / 2000)); const pr = s.ch.Press, lk = s.ch.Leak; evs.push(`${SS.label(n.date)} ${SS.fmtTime(e.start)} ${e.label} [${e.source}] ${e.dur.toFixed(0)}s P=${pr ? pr[Math.min(i2, pr.length - 1)].toFixed(1) : '?'} leak=${lk ? (lk[Math.min(i2, lk.length - 1)] * 60).toFixed(0) : '?'} ${e.detail}`); }
@@ -280,8 +317,40 @@ function md(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/
 function saveAnswer(q, a) { const list = store.get('answers', []); list.unshift({ when: new Date().toISOString(), q, a }); store.set('answers', list.slice(0, 200)); }
 function showSaved() { const box = $('savedbox'); box.style.display = box.style.display === 'none' ? 'block' : 'none'; const list = store.get('answers', []); $('savedlist').innerHTML = list.length ? list.map(x => `<div class="q">${new Date(x.when).toLocaleString()} · ${x.q.replace(/</g, '&lt;')}</div><div class="a">${md(x.a)}</div>`).join('') : '<p class="muted">Nothing saved yet.</p>'; }
 $('savedbtn').onclick = showSaved; $('newconv').onclick = () => { history = []; $('chat').innerHTML = '<p class="muted">New conversation. Your next question carries the current data range.</p>'; };
+const QUICK = ['Are my pressure settings OK?', 'Should I change my pressure settings? If so, to what?', 'How did last night go?', 'Am I improving? Compare the nights.', 'Is my mask leak a problem?', 'What does my oxygen data show?', 'Do the Watch and the machine agree?', 'What should I change first?', 'Write a summary for my doctor.'];
+function askRange() {
+  if (!nights.length) return ['', '']; const v = $('askrange').value; const last = nights[nights.length - 1].date;
+  if (v === 'syn') { let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a]; return [a, b]; }
+  if (v === 'all') return [nights[0].date, last];
+  const d = new Date(last + 'T12:00'); d.setDate(d.getDate() - (parseInt(v) - 1)); const a = d.toISOString().slice(0, 10); return [a < nights[0].date ? nights[0].date : a, last];
+}
+/** Plain summary of what goes to Claude with each question (same wording as the desktop). */
+function refreshAskContext() {
+  const el = $('askctx'); if (!el) return;
+  if (!nights.length) { el.innerHTML = '<b>What Claude sees with each question:</b> nothing yet. Load your card zip on the Start page first.'; return; }
+  const [a, b] = askRange(); const sel = nights.filter(n => n.date >= a && n.date <= b);
+  if (!sel.length) { el.innerHTML = '<b>What Claude sees with each question:</b> no nights in this range.'; return; }
+  const g = (k) => sel.map(n => n.stats[k]).filter(v => typeof v === 'number' && Number.isFinite(v)); const mean = (v) => v.reduce((x, y) => x + y, 0) / v.length;
+  const med = (v) => { const s2 = [...v].sort((x, y) => x - y), m = s2.length >> 1; return s2.length % 2 ? s2[m] : (s2[m - 1] + s2[m]) / 2; };
+  const lab = (d) => new Date(d + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: '2-digit', day: '2-digit' }).replace(',', '');
+  const ahi = g('AHI'), p95 = g('press_95'), lk = g('leak_95'); const sets = [...new Set(sel.map(n => SS.pressureLabel(n.stats)).filter(Boolean))].sort();
+  const ring = sel.filter(n => Number.isFinite(n.stats.spo2_mean)).length, watch = sel.filter(n => n.apple).length; const about = $('about').value.trim();
+  const out = [`${sel.length} night${sel.length !== 1 ? 's' : ''}, ${lab(sel[0].date)} to ${lab(sel[sel.length - 1].date)}.`];
+  if (ahi.length) out.push(`Machine AHI ${Math.min(...ahi).toFixed(1)} to ${Math.max(...ahi).toFixed(1)}, average ${mean(ahi).toFixed(1)}.`);
+  if (sets.length) out.push('Pressure setting ' + sets.join(', ') + '.');
+  if (p95.length) out.push(`Pressure 95th percentile ${mean(p95).toFixed(1)} cmH2O on average.`);
+  if (lk.length) out.push(`Leak 95th percentile ${med(lk).toFixed(1)} L/min (median night).`);
+  out.push(`Ring oxygen on ${ring} night${ring !== 1 ? 's' : ''}, Watch sleep on ${watch}.`);
+  out.push(about ? `About me: ${about.replace(/\.$/, '')}.` : 'About me: empty. Add a line (age, diagnosis AHI, mask, what you want) for better answers.');
+  out.push("Also sent: the synopsis, every night's numbers, the event list and the oxygen timeline.");
+  el.innerHTML = '<b>What Claude sees with each question:</b> ' + out.join(' ').replace(/</g, '&lt;');
+}
+$('askchips').innerHTML = QUICK.map((q, i) => `<button class="ghost" data-q="${i}" style="flex:0 1 auto;width:auto;max-width:100%;white-space:normal;text-align:left;padding:6px 10px;font-size:14px">${q}</button>`).join('');
+$('askchips').onclick = (e) => { const b = e.target.closest('button[data-q]'); if (!b || $('sendbtn').disabled) return; $('q').value = QUICK[+b.dataset.q]; $('sendbtn').click(); };
+$('askrange').value = store.get('askrange', '30'); $('askrange').onchange = () => { store.set('askrange', $('askrange').value); refreshAskContext(); };
+$('about').addEventListener('input', refreshAskContext);
 $('sendbtn').onclick = async () => {
-  const q = $('q').value.trim(); if (!q) return; if (!nights.length) { $('askstatus').textContent = 'Load data first.'; return; } let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a];
+  const q = $('q').value.trim(); if (!q) return; if (!nights.length) { $('askstatus').textContent = 'Load data first.'; return; } if (!$('apikey').value.trim()) { $('askstatus').textContent = 'Enter your API key above first.'; return; } const [a, b] = askRange();
   if (!history.length) history.push({ role: 'user', content: buildContext(a, b) + '\n\nQUESTION: ' + q }); else history.push({ role: 'user', content: q });
   const chat = $('chat'); chat.insertAdjacentHTML('beforeend', `<div class="q">You</div><div class="a">${q.replace(/</g, '&lt;')}</div>`); $('q').value = ''; $('sendbtn').disabled = true; $('askstatus').textContent = 'Waiting for Claude… (a long answer can take 30 to 60 s)'; chat.scrollTop = chat.scrollHeight;
   try { const text = await callClaude(history, sysWithAbout()); history.push({ role: 'assistant', content: text }); chat.insertAdjacentHTML('beforeend', `<div class="q" style="color:${C.orange}">Claude</div><div class="a">${md(text)}</div>`); saveAnswer(q, text); $('askstatus').textContent = 'Saved on this phone.'; }
@@ -305,7 +374,14 @@ $('helptext').innerHTML = `
 <h3>7. Oximeter</h3><p>In the O2Ring's app, export the night as CSV and share it to Files, then Import oximeter CSV here.</p>
 <h3>The numbers in plain words</h3><ul><li><b>Hours:</b> four hours on 70% of nights is the insurer's floor; six or more is where people feel it.</li><li><b>AHI:</b> under 5 normal, 5 to 15 mild, 15 to 30 moderate, over 30 severe. The app's flow-only AHI is a ceiling, always higher.</li><li><b>Leak:</b> 95th percentile under 24 L/min.</li><li><b>Flow limitation:</b> narrowing short of an event; fragments sleep without raising AHI.</li><li><b>SpO2 / ODI:</b> needs the ring; ODI under 5 and almost no time under 90% is the goal.</li></ul>`;
 (async () => {
-  if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js'); } catch (e) {} }
+  if ('serviceWorker' in navigator) { try {
+    // check for a new version on every open and whenever the app comes back to the front; reload once when it takes over
+    const had = !!navigator.serviceWorker.controller; let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded) { reloaded = true; location.reload(); } });
+    const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    const check = () => { try { reg.update(); } catch (e) {} }; check();
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+  } catch (e) {} }
   try { const ap = await idb.get('apple'); if (ap) appleData = AH.unpack(ap); } catch (e) {}
   try { const last = await idb.get('last'); if (last && last.files) { autoOpenSynopsis = true; $('loadmsg').textContent = 'Reloading ' + last.label + ' from last time…'; await loadFiles(last.files, last.label); } } catch (e) {}
 })();
@@ -314,5 +390,7 @@ function showAbout() {
   const v = window.SS_VERSION || { version: 'source', date: '' }; const long = (d) => { try { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); } catch (e) { return d; } };
   const year = Math.max(2026, new Date().getFullYear());
   document.getElementById('aboutbody').innerHTML = `<div><b>${v.version === 'source' ? 'Running from source' : 'Version ' + v.version}</b></div><div><b>Issued</b>&nbsp; ${v.date ? long(v.date) : long(new Date().toISOString().slice(0, 10))}</div><div><b>Copyright</b>&nbsp; \u00a9 ${year} Robert Barmore. All rights reserved.</div><div><b>License</b>&nbsp; MIT; source and the Windows version at github.com/robertb-design/SleepScope</div>`;
-  const el = document.getElementById('about'); el.style.display = 'flex';
+  const el = document.getElementById('aboutbox'); el.style.display = 'flex';
 }
+// version beside the name in the header (same number as the Windows build of this commit)
+(() => { const v = (window.SS_VERSION || {}).version || 'source'; const el = document.getElementById('hdrver'); if (el) el.textContent = v === 'source' ? 'source' : (/^\d/.test(v) ? 'v' + v : v); })();

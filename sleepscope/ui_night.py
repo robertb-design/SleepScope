@@ -17,6 +17,7 @@ PANELS = [  # key, title, units, y range or None
     ('mv', 'Minute ventilation', 'L/min', (0, 20)),
     ('spo2', 'SpO2', '%', (80, 100)),
     ('pulse', 'Pulse', 'bpm', (40, 120)),
+    ('motion', 'Ring motion (movement index)', '', (0, 100)),
     ('apple_stage', 'Apple Watch sleep stage', '', (-0.5, 4.5)),
     ('apple_hr', 'Apple Watch heart rate and SpO2', 'bpm / %', (40, 110)),
 ]
@@ -84,7 +85,9 @@ class NightView(QtWidgets.QWidget):
         first = None
         for key, title, unit, yr in PANELS:
             p = self.gl.addPlot(axisItems={'bottom': TimeAxis(t0, orientation='bottom')}); self.gl.nextRow()
-            style_plot(p); p.setLabel('left', unit); p.setTitle(title, size='9pt', color='#0b0b0b')
+            from . import explain as _ex
+            cap = _ex.NIGHT_CAPTIONS.get(key, '')
+            style_plot(p); p.setLabel('left', unit); p.setTitle(f"<span style='font-size:9pt;color:#0b0b0b'>{title}</span>" + (f"&nbsp;&nbsp;<span style='font-size:8pt;color:#52514e'>{cap}</span>" if cap else ''))
             p.titleLabel.item.setFont(QtGui.QFont('Segoe UI', 9, QtGui.QFont.DemiBold))
             p.setDownsampling(auto=True, mode='peak'); p.setClipToView(True); p.setMouseEnabled(y=False)
             if yr: p.setYRange(*yr, padding=0)
@@ -99,6 +102,8 @@ class NightView(QtWidgets.QWidget):
         for key, p in self.plots.items():
             vis = self.panel_actions[key].isChecked()
             if key in ('spo2', 'pulse') and self.night is not None and not any(s.has_oximetry for s in self.night.sessions):
+                vis = False
+            if key == 'motion' and (self.night is None or not any(getattr(s, 'motion', None) is not None for s in self.night.sessions)):
                 vis = False
             if key.startswith('apple') and (self.night is None or not getattr(self.night, 'apple', None)):
                 vis = False
@@ -124,7 +129,7 @@ class NightView(QtWidgets.QWidget):
         total_end = (night.sessions[-1].end - self.t0).total_seconds()
         pen = {k: pg.mkPen(c, width=1) for k, c in dict(flow=C['blue'], press=C['blue'], mask=C['aqua'], epr=C['grey'], leak=C['orange'],
                                                       flowlim=C['violet'], snore=C['magenta'], vent=C['aqua'], rr=C['blue'], tv=C['aqua'], mv=C['green'],
-                                                      spo2=C['red'], pulse=C['orange']).items()}
+                                                      spo2=C['red'], pulse=C['orange'], motion='#0e9aa7').items()}
         self.ov.clear(); self.ov.addItem(self.region)
         for s in night.sessions:
             off = (s.start - self.t0).total_seconds()
@@ -156,6 +161,13 @@ class NightView(QtWidgets.QWidget):
                 self.plots['spo2'].plot(t1, sp, pen=pen['spo2'], connect='finite')
                 self.plots['spo2'].addLine(y=90, pen=pg.mkPen(C['red'], style=QtCore.Qt.DashLine, width=1))
                 self.plots['pulse'].plot(t1, pu, pen=pen['pulse'], connect='finite')
+                mo = getattr(s, 'motion', None)
+                if mo is not None and len(mo) == len(t1):
+                    mv = np.where(mo >= 0, mo, np.nan)
+                    self.plots['motion'].plot(t1, mv, pen=pg.mkPen('#0e9aa7', width=1), fillLevel=0, brush=pg.mkBrush(14, 154, 167, 70), connect='finite')
+                for at in getattr(s, 'ox_alerts', []) or []:
+                    xa = off + (at - s.start).total_seconds()
+                    self.plots['spo2'].addLine(x=xa, pen=pg.mkPen(C['red'], width=1, style=QtCore.Qt.DotLine))
         ap = getattr(night, 'apple', None)
         if ap:
             order = {'Awake': 4, 'REM': 3, 'Core': 2, 'Asleep': 2, 'Deep': 1, 'InBed': 0}
@@ -244,11 +256,17 @@ class NightView(QtWidgets.QWidget):
         self._building = True; self.plots['flow'].setXRange(*self.region.getRegion(), padding=0); self._building = False
 
     def _mouse_moved(self, pos):
-        if self.night is None: return
-        p = self.plots['flow']
-        if not p.sceneBoundingRect().contains(pos) and not any(pp.sceneBoundingRect().contains(pos) for pp in self.plots.values()): return
-        x = p.vb.mapSceneToView(pos).x()
-        t = self.t0 + dt.timedelta(seconds=float(x))
+        if self.night is None or self.t0 is None or not self.night.sessions: return
+        # measure against the visible panel under the cursor (all panels share the x axis); a hidden panel maps to nonsense
+        p = next((pp for pp in self.plots.values() if pp.isVisible() and pp.sceneBoundingRect().contains(pos)), None)
+        if p is None: return
+        try:
+            x = float(p.vb.mapSceneToView(pos).x())
+        except Exception:
+            return
+        end = max((s.start - self.t0).total_seconds() + s.duration for s in self.night.sessions)
+        if not np.isfinite(x) or x < -6 * 3600 or x > end + 6 * 3600: return
+        t = self.t0 + dt.timedelta(seconds=x)
         parts = [t.strftime('%H:%M:%S')]
         for s in self.night.sessions:
             off = (s.start - self.t0).total_seconds()

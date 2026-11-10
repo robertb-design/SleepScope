@@ -63,6 +63,40 @@ def build_context(nights, start, end, diag_ahi=None):
             + "\n\n" + eq)
 
 
+QUICK_QUESTIONS = [
+    'Are my pressure settings OK?',
+    'Should I change my pressure settings? If so, to what?',
+    'How did last night go?',
+    'Am I improving? Compare the nights.',
+    'Is my mask leak a problem?',
+    'What does my oxygen data show?',
+    'Do the Watch and the machine agree?',
+    'What should I change first?',
+    'Write a summary for my doctor.',
+]
+
+
+def context_summary(nights, start, end, about=''):
+    """Plain summary of what goes to Claude with each question (same wording as the phone)."""
+    import numpy as np
+    sel = [n for n in nights if start <= n.date <= end]
+    if not sel: return 'No nights in this range. Load a card or widen the range.'
+    g = lambda k: [n.stats.get(k, np.nan) for n in sel if isinstance(n.stats.get(k, np.nan), (int, float)) and np.isfinite(n.stats.get(k, np.nan))]
+    ahi = g('AHI'); p95 = g('press_95'); lk = g('leak_95')
+    sets = sorted({n.stats.get('setting') for n in sel if n.stats.get('setting')})
+    ring = sum(1 for n in sel if np.isfinite(n.stats.get('spo2_mean', np.nan)))
+    watch = sum(1 for n in sel if getattr(n, 'apple', None))
+    out = [f"{len(sel)} night{'s' if len(sel) != 1 else ''}, {sel[0].date:%a %m/%d} to {sel[-1].date:%a %m/%d}."]
+    if ahi: out.append(f"Machine AHI {min(ahi):.1f} to {max(ahi):.1f}, average {np.mean(ahi):.1f}.")
+    if sets: out.append('Pressure setting ' + ', '.join(sets) + '.')
+    if p95: out.append(f"Pressure 95th percentile {np.mean(p95):.1f} cmH2O on average.")
+    if lk: out.append(f"Leak 95th percentile {np.median(lk):.1f} L/min (median night).")
+    out.append(f"Ring oxygen on {ring} night{'s' if ring != 1 else ''}, Watch sleep on {watch}.")
+    out.append(f"About me: {about.rstrip('.')}." if about else 'About me: empty. Add a line (age, diagnosis AHI, mask, what you want) for better answers.')
+    out.append('Also sent: the synopsis, every night\'s numbers, the event list and the oxygen timeline.')
+    return ' '.join(out)
+
+
 class AskWorker(QtCore.QThread):
     done = QtCore.Signal(str); failed = QtCore.Signal(str)
     def __init__(self, key, model, system, messages):
@@ -140,14 +174,27 @@ class AskView(QtWidgets.QWidget):
         self.card_btn = QtWidgets.QPushButton('Use SD card'); self.card_btn.setToolTip('Save into a SleepScope_Notes folder on the card. The machine ignores folders it does not know, but keep the card clean if ResMed support ever asks for it.')
         self.card_btn.clicked.connect(self.use_card); row2.addWidget(self.card_btn)
         sv = QtWidgets.QPushButton('Save conversation…'); sv.clicked.connect(self.save_conversation); row2.addWidget(sv)
-        row3 = QtWidgets.QHBoxLayout(); lay.addLayout(row3)
-        row3.addWidget(QtWidgets.QLabel('About me (optional, sent with each question, stored on this PC only)'))
-        self.about = QtWidgets.QLineEdit(SETTINGS.value('about_me', '')); self.about.setPlaceholderText('e.g. 71, engineer, diagnosed 2024, diagnostic AHI 35, want direct answers')
-        self.about.editingFinished.connect(lambda: SETTINGS.setValue('about_me', self.about.text().strip())); row3.addWidget(self.about, 1)
+        # About me: its own section at the top, multi line, kept in step with 'About me.txt' in the Sleepscope folder
+        abox = QtWidgets.QFrame(); abox.setStyleSheet('QFrame { background:#fff7ed; border:1px solid #f3c9a8; border-radius:6px; }')
+        al = QtWidgets.QVBoxLayout(abox); al.setContentsMargins(8, 6, 8, 6); al.setSpacing(3)
+        lab = QtWidgets.QLabel('<b>About me</b> <span style="color:#52514e">sent with every question so answers fit you. Stored on this PC and in About me.txt in your Sleepscope folder, which also fills in the phone.</span>')
+        lab.setWordWrap(True); lab.setStyleSheet('border:none; background:transparent'); al.addWidget(lab)
+        self.about = QtWidgets.QPlainTextEdit(SETTINGS.value('about_me', '')); self.about.setFixedHeight(62); self.about.setStyleSheet('background:white')
+        self.about.setPlaceholderText('Age, how you were diagnosed and the AHI, machine and pressure setting, mask, what devices you wear, how you want answers.')
+        al.addWidget(self.about); lay.insertWidget(0, abox)
+        self._about_timer = QtCore.QTimer(self); self._about_timer.setSingleShot(True); self._about_timer.setInterval(800); self._about_timer.timeout.connect(self._save_about)
+        self.about.textChanged.connect(self._about_timer.start); self.profile_folder = None
         row2.addWidget(QtWidgets.QLabel('Earlier:')); self.earlier = QtWidgets.QComboBox(); self.earlier.setMinimumWidth(260)
         self.earlier.activated.connect(self._pick_earlier); row2.addWidget(self.earlier)
         op = QtWidgets.QPushButton('Open folder'); op.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(self._ensure_folder() or '.'))); row2.addWidget(op)
         self.card_root = None
+        self.ctx = QtWidgets.QLabel(''); self.ctx.setWordWrap(True); self.ctx.setTextFormat(QtCore.Qt.RichText)
+        self.ctx.setStyleSheet('background:#eef4fb; border:1px solid #c9d8ee; border-radius:6px; padding:8px; color:#1d1d1b'); lay.addWidget(self.ctx)
+        qrow = QtWidgets.QGridLayout(); qrow.setHorizontalSpacing(6); qrow.setVerticalSpacing(4); lay.addLayout(qrow)
+        for i, q in enumerate(QUICK_QUESTIONS):
+            b = QtWidgets.QPushButton(q); b.setToolTip('Sends this question now'); b.setStyleSheet('text-align:left; padding:4px 8px')
+            b.clicked.connect(lambda _=False, q=q: self.quick(q)); qrow.addWidget(b, i // 3, i % 3)
+        self.d0.dateChanged.connect(self.refresh_context); self.d1.dateChanged.connect(self.refresh_context); self.about.textChanged.connect(self.refresh_context)
         self.view = QtWidgets.QTextBrowser(); self.view.setOpenExternalLinks(True); self.view.setStyleSheet('font-size:13px; padding:6px'); lay.addWidget(self.view, 1)
         bottom = QtWidgets.QHBoxLayout(); lay.addLayout(bottom)
         self.input = QtWidgets.QPlainTextEdit(); self.input.setFixedHeight(70); self.input.setPlaceholderText('Ask about the results in the selected range. Ctrl+Enter to send.')
@@ -155,21 +202,60 @@ class AskView(QtWidgets.QWidget):
         self.send = QtWidgets.QPushButton('Send'); self.send.setFixedWidth(90); self.send.clicked.connect(self.ask); bottom.addWidget(self.send)
         self.status = QtWidgets.QLabel(''); self.status.setStyleSheet('color:#52514e'); lay.addWidget(self.status)
         self.timer = QtCore.QTimer(self); self.timer.setInterval(1000); self.timer.timeout.connect(self._tick); self._t0 = None
-        self.intro()
+        self.intro(); self.refresh_context()
+
+    def refresh_context(self, *_):
+        if not self.nights:
+            self.ctx.setText('<b>What Claude sees with each question:</b> nothing yet. Open an SD card first.'); return
+        a, b = self.d0.date().toPython(), self.d1.date().toPython()
+        if a > b: a, b = b, a
+        self.ctx.setText('<b>What Claude sees with each question:</b> ' + html.escape(context_summary(self.nights, a, b, self.about_text())))
+
+    def about_text(self):
+        return ' '.join(self.about.toPlainText().split())
+
+    ABOUT_FILE = 'About me.txt'
+    def set_profile_folder(self, folder):
+        """Take About me.txt from the Sleepscope folder when this PC has nothing, or still has the last copy it took from the file."""
+        self.profile_folder = folder if folder and os.path.isdir(folder) else None
+        if not self.profile_folder: return
+        f = os.path.join(self.profile_folder, self.ABOUT_FILE)
+        try:
+            txt = open(f, encoding='utf-8-sig').read().strip() if os.path.isfile(f) else ''
+        except OSError:
+            txt = ''
+        cur = self.about.toPlainText().strip()
+        if txt and txt != cur and (not cur or cur == SETTINGS.value('about_file_last', '')):
+            self.about.blockSignals(True); self.about.setPlainText(txt); self.about.blockSignals(False)
+            SETTINGS.setValue('about_me', txt); SETTINGS.setValue('about_file_last', txt); self.refresh_context()
+        elif cur and not txt:
+            self._save_about()                                        # first run: write the PC copy out for the phone
+
+    def _save_about(self):
+        txt = self.about.toPlainText().strip(); SETTINGS.setValue('about_me', txt)
+        if self.profile_folder:
+            try:
+                with open(os.path.join(self.profile_folder, self.ABOUT_FILE), 'w', encoding='utf-8') as f: f.write(txt + '\n')
+                SETTINGS.setValue('about_file_last', txt)
+            except OSError:
+                pass
+
+    def quick(self, q):
+        if self.worker and self.worker.isRunning(): return
+        self.input.setPlainText(q); self.ask()
 
     def intro(self):
         self.view.setHtml("""<p><b>Ask Claude about your data.</b> Each question goes to the Claude API together with the synopsis, the per-night statistics and the event list for the selected range,
         so the answer is grounded in your numbers.</p>
         <p>You need an API key: create one at <a href='https://console.anthropic.com/'>console.anthropic.com</a> (API keys). It is billed per use, separately from a claude.ai subscription;
         a question with a month of context costs a few cents. The key is saved on this PC only. Nothing is sent until you press Send.</p>
-        <p>Suggested questions: <i>What should I change first?</i> &nbsp; <i>Is the leak on 10/28 the mask or my mouth?</i> &nbsp; <i>Do the central apneas worry you?</i> &nbsp;
-        <i>Write a summary I can give my sleep doctor.</i> &nbsp; <i>Compare the nights under different settings.</i> &nbsp;
-        <i>Does my leak pattern suggest a different mask type?</i></p>""")
+        <p>Click a question above to send it, or type your own below.</p>""")
 
     def set_nights(self, nights):
         self.nights = nights
         if not nights: return
         self.d0.setDate(QtCore.QDate(max(nights[0].date, nights[-1].date - dt.timedelta(days=29)))); self.d1.setDate(QtCore.QDate(nights[-1].date))
+        self.refresh_context()
 
     def eventFilter(self, obj, ev):
         if obj is self.input and ev.type() == QtCore.QEvent.KeyPress and ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and ev.modifiers() & QtCore.Qt.ControlModifier:
@@ -296,7 +382,7 @@ class AskView(QtWidgets.QWidget):
         if self._t0: self.status.setText(f'Waiting for Claude... {int((dt.datetime.now() - self._t0).total_seconds())} s  (a long answer can take 30 to 60 s)')
     def _start_worker(self, messages, msg):
         self._t0 = dt.datetime.now(); self.timer.start(); self.send.setEnabled(False); self.status.setText(msg)
-        sysmsg = SYSTEM + (f'\nAbout the user, in their words: {self.about.text().strip()}\n' if self.about.text().strip() else '')
+        sysmsg = SYSTEM + (f'\nAbout the user, in their words: {self.about_text()}\n' if self.about_text() else '')
         self.worker = AskWorker(self.key.text().strip(), self.model.text().strip() or DEFAULT_MODEL, sysmsg, messages)
         self.worker.done.connect(self._answer); self.worker.failed.connect(self._fail); self.worker.start()
     def test_connection(self):

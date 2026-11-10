@@ -96,31 +96,108 @@ const SS = (() => {
   const pct = (arr, q) => { if (!arr.length) return NaN; const a = Float64Array.from(arr).sort(); const i = (a.length - 1) * q; const lo = Math.floor(i), hi = Math.ceil(i); return a[lo] + (a[hi] - a[lo]) * (i - lo); };
   const cat = (ss, k, sc = 1) => { const parts = ss.filter(s => s.ch[k]).map(s => s.ch[k]); const n = parts.reduce((a, p) => a + p.length, 0); const out = new Float64Array(n); let o = 0; for (const p of parts) { for (let i = 0; i < p.length; i++) out[o++] = p[i] * sc; } return out; };
   const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN;
+
+  // ---- oximetry dips, event annotation, ramp-free pressure floor (same rules as the desktop)
+  let STR = null; function setStr(x) { STR = x; }
+  function desatEvents(s) {
+    const sp = s.spo2; if (!sp || sp.length < 120) return []; const n = sp.length; const valid = new Uint8Array(n); let nv = 0; for (let i = 0; i < n; i++) if (sp[i] > 50 && sp[i] <= 100) { valid[i] = 1; nv++; } if (nv < 120) return [];
+    const base = new Float32Array(n).fill(NaN); for (let i = 0; i < n; i++) { const w = []; for (let k = Math.max(0, i - 120); k <= i; k++) if (valid[k]) w.push(sp[k]); if (w.length) { w.sort((a, b) => a - b); base[i] = w.length % 2 ? w[w.length >> 1] : (w[w.length / 2 - 1] + w[w.length / 2]) / 2; } }
+    const pu = s.pulse, mo = s.motion; const pm = (a, b) => { let t = 0, c = 0; for (let k = Math.max(0, a); k < Math.min(n, b); k++) if (pu && pu[k] > 30 && pu[k] < 200) { t += pu[k]; c++; } return c ? t / c : NaN; };
+    const out = []; let i = 0;
+    while (i < n) { if (valid[i] && sp[i] <= base[i] - 3) { let j = i; while (j < n && valid[j] && sp[j] <= base[j] - 3) j++; if (j - i >= 10) { let lo = 101, k0 = i; for (let k = i; k < j; k++) if (sp[k] < lo) { lo = sp[k]; k0 = k; } let moving = false; if (mo) for (let k = Math.max(0, i - 10); k < Math.min(n, j + 10); k++) if (mo[k] >= 30) { moving = true; break; } out.push({ i0: i, i1: j, base: base[i], low: lo, k_low: k0, motion: moving, pulse_before: pm(i - 30, i), pulse_after: pm(k0, k0 + 30) }); } i = j; } else i++; }
+    return out;
+  }
+  function annotateEvents(s) {
+    const leaks = s.app.filter(e => e.label === 'Large Leak').map(e => [e.start.getTime(), e.start.getTime() + e.dur * 1000]);
+    const sp = s.spo2, pu = s.pulse; const hasOx = !!(sp && sp.some(v => v > 50));
+    for (const e of s.app) {
+      if (e.baseDetail === undefined) e.baseDetail = e.detail; e.inLeak = false; e.confirm = null;
+      if (e.label === 'Large Leak' || e.label === 'Periodic Breathing') { e.detail = e.baseDetail; continue; }
+      const mid = e.start.getTime() + e.dur * 500; e.inLeak = leaks.some(([a, b]) => mid >= a && mid <= b);
+      if (e.label === 'Hypopnea') {
+        const baseTxt = e.baseDetail.replace(' (flow only, unconfirmed)', ''); let note = '';
+        if (hasOx) {
+          const a = Math.floor((e.start - s.start) / 1000), b = Math.floor(a + e.dur);
+          if (a >= 0 && a < sp.length - 5) {
+            const pre = []; for (let k = Math.max(0, a - 120); k < a; k++) if (sp[k] > 50) pre.push(sp[k]); let mn = 101; for (let k = a; k < Math.min(sp.length, b + 30); k++) if (sp[k] > 50 && sp[k] < mn) mn = sp[k];
+            if (pre.length >= 20 && mn <= 100) {
+              pre.sort((x, y) => x - y); const drop = pre[pre.length >> 1] - mn; let rise = NaN;
+              if (pu) { const pb = []; for (let k = Math.max(0, a - 30); k < a; k++) if (pu[k] > 30) pb.push(pu[k]); let mx = -1; for (let k = b; k < Math.min(pu.length, b + 15); k++) if (pu[k] > 30 && pu[k] > mx) mx = pu[k]; if (pb.length && mx > 0) { pb.sort((x, y) => x - y); rise = mx - pb[pb.length >> 1]; } }
+              if (drop >= 3) { e.confirm = 'desat'; note = ` (confirmed: SpO2 fell ${drop.toFixed(0)} points)`; }
+              else if (Number.isFinite(rise) && rise >= 6) { e.confirm = 'pulse'; note = ` (confirmed by pulse rise of ${rise.toFixed(0)} bpm, arousal proxy)`; }
+              else { e.confirm = 'no'; note = ` (not confirmed: SpO2 fell ${Math.max(drop, 0).toFixed(0)}, pulse rose ${Number.isFinite(rise) ? Math.max(rise, 0).toFixed(0) : 0}; not counted)`; }
+            }
+          }
+        }
+        if (e.confirm === null) note = ' (flow only, unconfirmed)';
+        e.detail = baseTxt + note;
+      } else e.detail = e.baseDetail;
+      if (e.inLeak) e.detail += '; during large leak, not counted';
+    }
+  }
+  const counted = (e) => !e.inLeak && !(e.label === 'Hypopnea' && e.confirm === 'no');
+  function pressureFloor(ss) { const lows = []; for (const s of ss) { const p = s.ch.Press; if (!p || p.length < 60) continue; const j = Math.min(1350, p.length >> 1); let m = Infinity; for (let k = j; k < p.length; k++) if (p[k] < m) m = p[k]; lows.push(m); } return lows.length ? Math.min(...lows) : NaN; }
+  function strSetting(nt, mode) {
+    if (!STR || !STR.signals) return null; const i = STR.days.indexOf(nt.date); if (i < 0) return null; const labs = Object.keys(STR.signals);
+    const find = (...ps) => labs.find(l => ps.some(p => p.test(l))); const v = (l) => { const x = l ? STR.signals[l][i] : NaN; return Number.isFinite(x) && x > 0 ? x : null; };
+    const lo = v(find(/AS\.MinPress/, /MinPress/)), hi = v(find(/AS\.MaxPress/, /MaxPress/)), c = v(find(/S\.C\.Press/, /C\.Press/));
+    if (lo && hi && hi > lo && mode !== 'CPAP') return `AutoSet ${+lo.toFixed(1)} to ${+hi.toFixed(1)}`; if (c && mode === 'CPAP') return `CPAP ${+c.toFixed(1)}`; return null;
+  }
+
+  // ---- nights the card missed: the machine's own summary from STR.edf
+  function summaryNights(str, nights) {
+    if (!str || !str.signals || !nights.length) return [];
+    const have = new Set(nights.map(n => n.date)); const dates = nights.map(n => n.date).sort(); const lo = dates[0], hi = dates[dates.length - 1];
+    const labs = Object.keys(str.signals); const L = (...names) => labs.find(l => names.some(n => l.toLowerCase() === n.toLowerCase()));
+    const v1 = (lab, i) => { if (!lab) return NaN; const x = str.signals[lab][i]; return Number.isFinite(x) ? x : NaN; };
+    const day = (lab, i) => { if (!lab) return []; const a = str.all && str.all[lab]; if (!a) return [v1(lab, i)]; return Array.from(a.data.slice(i * a.per, (i + 1) * a.per)); };
+    const ldur = L('Duration', 'OnDuration'), lon = L('MaskOn'), loff = L('MaskOff'); const out = [];
+    str.days.forEach((d, i) => {
+      if (have.has(d) || d < lo || d > hi) return; const dur = v1(ldur, i); if (!Number.isFinite(dur) || dur < 5) return;
+      const [y, m, dd] = d.split('-').map(Number); const day0 = new Date(y, m - 1, dd, str.startHour ?? 12, 0, 0); let sess = [];
+      if (lon && loff) { const a = day(lon, i), b = day(loff, i); for (let k = 0; k < Math.min(a.length, b.length); k++) if (a[k] >= 0 && b[k] > a[k] && b[k] <= 1440) sess.push({ start: new Date(day0.getTime() + a[k] * 60000), duration: (b[k] - a[k]) * 60, ch: {}, machine: [], app: [], summary: true }); }
+      let exact = sess.length > 0;
+      if (!sess.length || Math.abs(sess.reduce((t, x) => t + x.duration, 0) / 60 - dur) > Math.max(20, 0.25 * dur)) { sess = [{ start: new Date(y, m - 1, dd, 22, 0, 0), duration: dur * 60, ch: {}, machine: [], app: [], summary: true }]; exact = false; }
+      const g = (...n) => v1(L(...n), i); let lk = [g('Leak.50'), g('Leak.95'), g('Leak.Max')]; if (lk.every(x => !Number.isFinite(x) || x < 3)) lk = lk.map(x => Number.isFinite(x) ? x * 60 : x);
+      let tv = g('TidVol.50'); if (Number.isFinite(tv) && tv < 5) tv *= 1000;
+      out.push({ date: d, sessions: sess, hours: dur / 60, summary_only: true, str_summary: { hours: dur / 60, AHI: g('AHI'), OAI: g('OAI'), CAI: g('CAI'), HI: g('HI'), UAI: g('UAI'), leak_med: lk[0], leak_95: lk[1], leak_max: lk[2], press_med: g('MaskPress.50'), press_95: g('MaskPress.95'), press_max: g('MaskPress.Max'), rr_med: g('RespRate.50'), tv_med: tv, mv_med: g('MinVent.50'), exact } });
+    });
+    return out;
+  }
   function nightStats(nt) {
     const ss = nt.sessions, hrs = nt.hours; const pr = cat(ss, 'Press'), leak = cat(ss, 'Leak', 60), fl = cat(ss, 'FlowLim'), sn = cat(ss, 'Snore'), rr = cat(ss, 'RespRate'), tv = cat(ss, 'TidVol', 1000), mv = cat(ss, 'MinVent'), epr = cat(ss, 'EprPress');
-    const mev = ss.flatMap(s => s.machine), aev = ss.flatMap(s => s.app); const cnt = (ev, l) => ev.filter(e => e.label === l).length;
+    for (const s of ss) annotateEvents(s);
+    const mev = ss.flatMap(s => s.machine), aevAll = ss.flatMap(s => s.app), aev = aevAll.filter(counted); const cnt = (ev, l) => ev.filter(e => e.label === l).length;
+    const hypAll = aevAll.filter(e => e.label === 'Hypopnea'), hypChecked = hypAll.filter(e => e.confirm !== null), hypConf = hypChecked.filter(e => e.confirm === 'desat' || e.confirm === 'pulse');
+    const leakExcluded = aevAll.filter(e => e.inLeak && e.label !== 'Large Leak' && e.label !== 'Periodic Breathing').length;
     const OA = cnt(mev, 'Obstructive Apnea'), CA = cnt(mev, 'Central Apnea'), H = cnt(mev, 'Hypopnea'), UA = cnt(mev, 'Unclassified Apnea'), AR = cnt(mev, 'Arousal');
     const appAp = aev.filter(e => /Apnea/.test(e.label)).length, appH = cnt(aev, 'Hypopnea'), appFL = cnt(aev, 'Flow Limitation Run');
     const pmax = pr.length ? Math.max(...pr) : NaN, pmin = pr.length ? Math.min(...pr) : NaN; const atMax = pr.length ? pr.filter(v => v >= pmax - 0.1).length / pr.length : NaN;
     const skip = Math.max(Math.floor(pr.length * 0.15), Math.min(900, pr.length >> 1)); const after = pr.subarray(skip); let mode = 'AutoSet';
     if (after.length) { const m = mean(after); const sd = Math.sqrt(mean(after.map(v => (v - m) ** 2))); if (sd < 0.05) mode = 'CPAP'; }
     const spv = []; const puv = []; for (const s of ss) { if (s.spo2) for (let i = 0; i < s.spo2.length; i++) { if (s.spo2[i] > 50 && s.spo2[i] <= 100) spv.push(s.spo2[i]); if (s.pulse && s.pulse[i] > 30 && s.pulse[i] < 200) puv.push(s.pulse[i]); } }
-    let odi = 0; if (spv.length > 120) { let i = 60; while (i < spv.length) { let mx = 0; for (let j = i - 60; j < i; j++) if (spv[j] > mx) mx = spv[j]; if (spv[i] <= mx - 3) { odi++; i += 20; } else i++; } }
-    const leaks = aev.filter(e => e.label === 'Large Leak');
+    const dips = ss.flatMap(s => desatEvents(s)); const odi = dips.filter(d => !d.motion).length, odiMotion = dips.length - odi;
+    const leaks = aevAll.filter(e => e.label === 'Large Leak');
     const g = (a) => a.length ? a : null;
-    return {
+    const st = {
       date: nt.date, hours: hrs, sessions: ss.length, mode, starts: ss.map(s => fmtTime(s.start)).join(', '), ends: ss.map(s => fmtTime(new Date(s.start.getTime() + s.duration * 1000))).join(', '),
       OA, CA, H, UA, arousals: AR, AHI: hrs ? (OA + CA + H + UA) / hrs : 0, CAI: hrs ? CA / hrs : 0,
       app_apneas: appAp, app_unflagged: cnt(aev, 'Apnea (unflagged by machine)'), app_hypopneas: appH, app_AHI: hrs ? (appAp + appH) / hrs : 0, app_flowlim_runs: appFL,
-      press_min: pmin, press_max: pmax, press_med: pct(pr, 0.5), press_95: pct(pr, 0.95), press_at_max_pct: atMax * 100, epr: (epr.length && epr.length === pr.length) ? pct(pr.map((v, i) => v - epr[i]), 0.5) : NaN,
+      app_hyp_checked: hypChecked.length, app_hyp_confirmed: hypConf.length, app_hyp_conf_txt: hypChecked.length ? `${hypConf.length} of ${hypChecked.length}` : '', app_leak_excluded: leakExcluded, ODI_motion: odiMotion,
+      press_min: pmin, press_floor: pressureFloor(ss), str_setting: strSetting(nt, mode), press_max: pmax, press_med: pct(pr, 0.5), press_95: pct(pr, 0.95), press_at_max_pct: atMax * 100, epr: (epr.length && epr.length === pr.length) ? pct(pr.map((v, i) => v - epr[i]), 0.5) : NaN,
       leak_med: pct(leak, 0.5), leak_95: pct(leak, 0.95), leak_max: leak.length ? Math.max(...leak) : NaN, leak_pct_large: leak.length ? 100 * leak.filter(v => v > 24).length / leak.length : NaN, leak_episodes: leaks.length, leak_minutes: leaks.reduce((a, e) => a + e.dur, 0) / 60,
       flowlim_95: pct(fl, 0.95), flowlim_mean: mean(Array.from(fl)), flowlim_minutes: fl.length ? fl.filter(v => v >= 0.2).length * 2 / 60 : NaN, snore_95: pct(sn, 0.95),
       rr_med: pct(rr.filter(v => v > 0), 0.5), tv_med: pct(tv.filter(v => v > 0), 0.5), mv_med: pct(mv.filter(v => v > 0), 0.5),
       spo2_mean: spv.length ? mean(spv) : NaN, spo2_min: spv.length ? Math.min(...spv) : NaN, spo2_pct_lt90: spv.length ? 100 * spv.filter(v => v < 90).length / spv.length : NaN, spo2_minutes_lt88: spv.length ? spv.filter(v => v < 88).length / 60 : NaN,
       ODI: spv.length > 600 ? odi / (spv.length / 3600) : NaN, pulse_mean: puv.length ? mean(puv) : NaN, pulse_min: puv.length ? Math.min(...puv) : NaN,
     };
+    if (nt.summary_only && nt.str_summary) { const sm = nt.str_summary, h = sm.hours || hrs; const rr = (x) => Number.isFinite(x) ? Math.round(x * h) : 0;
+      Object.assign(st, { mode: 'Summary only', AHI: sm.AHI, OA: rr(sm.OAI), CA: rr(sm.CAI), H: rr(sm.HI), UA: rr(sm.UAI), CAI: sm.CAI, arousals: NaN, app_AHI: NaN, app_apneas: NaN, app_hypopneas: NaN, app_unflagged: NaN, app_flowlim_runs: NaN, app_leak_excluded: NaN, app_hyp_conf_txt: '',
+        leak_med: sm.leak_med, leak_95: sm.leak_95, leak_max: sm.leak_max, leak_pct_large: NaN, press_med: sm.press_med, press_95: sm.press_95, press_max: sm.press_max, press_min: NaN, press_floor: NaN, press_at_max_pct: NaN,
+        rr_med: sm.rr_med, tv_med: sm.tv_med, mv_med: sm.mv_med, flowlim_95: NaN, flowlim_minutes: NaN, summary_only: true, str_setting: strSetting(nt, 'AutoSet') }); }
+    return st;
   }
-  function pressureLabel(st) { const lo = st.press_min, hi = st.press_max; if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ''; return st.mode === 'CPAP' ? `CPAP ${hi.toFixed(0)}` : `AutoSet ${lo.toFixed(0)} to ${hi.toFixed(0)}`; }
+  function pressureLabel(st) { if (st.str_setting) return st.str_setting; if (st.summary_only) return ''; const lo = Number.isFinite(st.press_floor) ? st.press_floor : st.press_min, hi = st.press_max; if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ''; return st.mode === 'CPAP' ? `CPAP ${hi.toFixed(0)} (trace)` : `AutoSet ${lo.toFixed(0)} to ${hi.toFixed(0)} (trace)`; }
   function fmtTime(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
   function label(dateStr) { const [y, m, d] = dateStr.split('-').map(Number); const dt = new Date(y, m - 1, d); return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' }); }
 
@@ -186,27 +263,40 @@ const SS = (() => {
 
   // ---------------------------------------------------------------- oximeter CSV
   function importOximeterCsv(text, nights) {
-    const lines = text.split(/\r?\n/).filter(l => l.trim()); if (lines.length < 2) return 0; const hdr = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const col = (...keys) => hdr.findIndex(h => keys.some(k => h.includes(k))); const ti = col('time', 'date'), si = col('spo2', 'oxygen', 'o2'), pi = col('pulse', 'hr', 'heart'); if (ti < 0 || si < 0) return 0;
+    const lines = text.split(/\r?\n/).filter(l => l.trim()); if (lines.length < 2) return 0; const splitQ = (l) => { const out = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; }; const hdr = splitQ(lines[0]).map(h => h.trim().toLowerCase());
+    const col = (...keys) => hdr.findIndex(h => keys.some(k => h.includes(k))); const ti = col('time', 'date'), si = col('spo2', 'oxygen', 'o2'), pi = col('pulse', 'hr', 'heart'), mi = col('motion', 'movement', 'activity'); const ai = hdr.map((h, i) => (/reminder|alarm|vibrat/.test(h) ? i : -1)).filter(i => i >= 0); if (ti < 0 || si < 0) return 0;
     const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
     const parse = (s) => { s = s.trim(); let m = s.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/i); if (m && MON[m[5].toLowerCase()] !== undefined) { let h = +m[1]; if (m[4]) { if (/pm/i.test(m[4]) && h < 12) h += 12; if (/am/i.test(m[4]) && h === 12) h = 0; } return new Date(+m[7], MON[m[5].toLowerCase()], +m[6], h, +m[2], +m[3]); } m = s.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/i); if (m) { let h = +m[1]; if (m[4]) { if (/pm/i.test(m[4]) && h < 12) h += 12; if (/am/i.test(m[4]) && h === 12) h = 0; } return new Date(+m[7], +m[5] - 1, +m[6], h, +m[2], +m[3]); } m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})/); if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]); m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?$/i); if (m) { let h = +m[4]; if (m[7]) { if (/pm/i.test(m[7]) && h < 12) h += 12; if (/am/i.test(m[7]) && h === 12) h = 0; } return new Date(+m[3], +m[1] - 1, +m[2], h, +m[5], +m[6]); } return null; };
-    const ts = [], sp = [], pu = []; for (let i = 1; i < lines.length; i++) { const c = lines[i].split(','); const t = parse(c[ti] || ''); const v = parseFloat(c[si]); if (!t || !Number.isFinite(v)) continue; ts.push(t.getTime() / 1000); sp.push(v); pu.push(pi >= 0 ? parseFloat(c[pi]) : NaN); }
+    const ts = [], sp = [], pu = [], mo = [], al = []; for (let i = 1; i < lines.length; i++) { const c = lines[i].includes('"') ? splitQ(lines[i]) : lines[i].split(','); const t = parse(c[ti] || ''); let v = parseFloat(c[si]); if (!t) continue; if (!(v >= 50 && v <= 100)) v = NaN; ts.push(t.getTime() / 1000); sp.push(v); { const pv = pi >= 0 ? parseFloat(c[pi]) : NaN; pu.push(pv >= 25 && pv <= 250 ? pv : NaN); } mo.push(mi >= 0 ? parseFloat(c[mi]) : NaN); let f = 0; for (const k of ai) { const x = parseFloat(c[k]); if (Number.isFinite(x) && x > f) f = x; } al.push(f); }
+    return attachOx(ts, sp, pu, mo, al, mi >= 0, nights);
+  }
+  // Wellue O2 Insight Pro raw recording: name yyyymmddHHMMSS, 10 byte header 01 03..., 3 bytes per second (SpO2, pulse, motion; 255 = none), 48 byte footer.
+  function importO2RingRaw(buf, name, nights) {
+    const m = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(name || ''); const d = new Uint8Array(buf); if (!m || d.length < 58 + 180 || d[0] !== 1 || d[1] !== 3) return 0;
+    const n = (d.length - 58) % 3 === 0 ? (d.length - 58) / 3 : Math.floor((d.length - 10) / 3); const t0 = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() / 1000;
+    const ts = [], sp = [], pu = [], mo = [], al = [];
+    for (let i = 0; i < n; i++) { const o = 10 + 3 * i, v = d[o], p = d[o + 1], q = d[o + 2]; ts.push(t0 + i); sp.push(v >= 50 && v <= 100 ? v : NaN); pu.push(p >= 25 && p < 255 ? p : NaN); mo.push(q === 255 ? NaN : q); al.push(0); }
+    return attachOx(ts, sp, pu, mo, al, true, nights);
+  }
+  function attachOx(ts, sp, pu, mo, al, hasMo, nights) {
     let filled = 0;
     for (const nt of nights) for (const s of nt.sessions) {
       const a = s.start.getTime() / 1000, b = a + s.duration; const idx = []; for (let i = 0; i < ts.length; i++) if (ts[i] >= a - 60 && ts[i] <= b + 60) idx.push(i); if (idx.length < 30) continue;
-      const n = Math.floor(s.duration); s.spo2 = new Float32Array(n).fill(-1); s.pulse = new Float32Array(n).fill(-1); let j = 0;
-      for (let k = 0; k < n; k++) { const t = a + k; while (j + 1 < idx.length && ts[idx[j + 1]] <= t) j++; const i0 = idx[j], i1 = idx[Math.min(j + 1, idx.length - 1)]; if (t < ts[i0] - 30 || t > ts[i1] + 30) continue; const w = ts[i1] > ts[i0] ? (t - ts[i0]) / (ts[i1] - ts[i0]) : 0; const ww = Math.max(0, Math.min(1, w)); s.spo2[k] = sp[i0] + (sp[i1] - sp[i0]) * ww; s.pulse[k] = pu[i0] + (pu[i1] - pu[i0]) * ww; }
+      const n = Math.floor(s.duration); s.spo2 = new Float32Array(n).fill(-1); s.pulse = new Float32Array(n).fill(-1); s.motion = hasMo ? new Float32Array(n).fill(-1) : null; s.oxAlerts = []; let j = 0;
+      for (let k = 0; k < n; k++) { const t = a + k; while (j + 1 < idx.length && ts[idx[j + 1]] <= t) j++; const i0 = idx[j], i1 = idx[Math.min(j + 1, idx.length - 1)]; if (t < ts[i0] - 30 || t > ts[i1] + 30) continue; const w = ts[i1] > ts[i0] ? (t - ts[i0]) / (ts[i1] - ts[i0]) : 0; const ww = Math.max(0, Math.min(1, w)); s.spo2[k] = sp[i0] + (sp[i1] - sp[i0]) * ww; s.pulse[k] = pu[i0] + (pu[i1] - pu[i0]) * ww; if (s.motion) { const m0 = Number.isFinite(mo[i0]) ? mo[i0] : 0, m1 = Number.isFinite(mo[i1]) ? mo[i1] : 0; s.motion[k] = Math.max(m0, m1); } }
+      for (const q of idx) if (al[q] > 0) s.oxAlerts.push(new Date(ts[q] * 1000));
       s.hasOx = true; filled++;
     }
     return filled;
   }
-  function readStr(buf) {
+  let allSamples = null;
+  function readStr(buf) { allSamples = null;
     try { const e = readEdf(buf, true); const days = []; for (let i = 0; i < e.nrec; i++) { const d = new Date(e.start.getTime() + i * 86400e3); days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); }
-      const signals = {}; for (const k in e.sigs) { const sg = e.sigs[k]; const per = Math.max(1, Math.round(sg.data.length / e.nrec)); const v = []; for (let i = 0; i < e.nrec; i++) v.push(sg.data[i * per]); signals[k] = v; } return { days, signals }; } catch (err) { return null; }
+      const signals = {}; for (const k in e.sigs) { const sg = e.sigs[k]; const per = Math.max(1, Math.round(sg.data.length / e.nrec)); const v = []; for (let i = 0; i < e.nrec; i++) v.push(sg.data[i * per]); if (per > 1) { (allSamples ||= {})[k] = { per, data: sg.data }; } signals[k] = v; } return { days, signals, all: allSamples, startHour: e.start.getHours() }; } catch (err) { return null; }
   }
   function settingsSummary(nights, str) {
     const fin = Number.isFinite; const out = {};
-    if (nights.length) { const mins = nights.map(n => n.stats.press_min).filter(fin), maxs = nights.map(n => n.stats.press_max).filter(fin); out.press_min = mins.length ? Math.min(...mins) : NaN; out.press_max = maxs.length ? Math.max(...maxs) : NaN; out.mode = [...new Set(nights.map(n => n.stats.mode))].sort().join('/'); const e = nights.map(n => n.stats.epr).filter(fin).sort((a, b) => a - b); out.epr = e.length ? e[e.length >> 1] : NaN; }
+    if (nights.length) { const fls = nights.map(n => n.stats.press_floor).filter(fin); out.press_floor = fls.length ? Math.min(...fls) : NaN; const mins = nights.map(n => n.stats.press_min).filter(fin), maxs = nights.map(n => n.stats.press_max).filter(fin); out.press_min = mins.length ? Math.min(...mins) : NaN; out.press_max = maxs.length ? Math.max(...maxs) : NaN; out.mode = [...new Set(nights.map(n => n.stats.mode))].sort().join('/'); const e = nights.map(n => n.stats.epr).filter(fin).sort((a, b) => a - b); out.epr = e.length ? e[e.length >> 1] : NaN; }
     out.str_found = false;
     if (str && str.signals && nights.length) {
       const find = (...pats) => Object.keys(str.signals).find(l => pats.some(p => p.test(l))); const idx = nights.map(n => str.days.indexOf(n.date)).filter(i => i >= 0);
@@ -220,7 +310,7 @@ const SS = (() => {
     const rng = (v) => v ? (Math.abs(v[0] - v[1]) < 1e-6 ? `${+v[0].toFixed(1)}` : `${+v[0].toFixed(1)} to ${+v[1].toFixed(1)}`) : null; const b = (t) => `<b>${t}</b>`; const parts = []; const fin = Number.isFinite;
     if (sm.set_min && sm.set_max && sm.set_max[1] > 0 && sm.set_min[1] !== sm.set_max[1]) parts.push(`Pressure set ${b('low ' + rng(sm.set_min) + ', high ' + rng(sm.set_max) + ' cmH2O')} (AutoSet)`);
     else if (sm.set_cpap && sm.set_cpap[1] > 0 && (sm.mode || '').startsWith('CPAP')) parts.push(`Pressure set ${b(rng(sm.set_cpap) + ' cmH2O')} (CPAP)`);
-    else if (fin(sm.press_min)) parts.push(sm.mode === 'CPAP' ? `Pressure ${b('fixed ' + sm.press_max.toFixed(0) + ' cmH2O')} (ramp from ${sm.press_min.toFixed(0)}, from the trace)` : `Pressure ${b('low ' + sm.press_min.toFixed(0) + ', high ' + sm.press_max.toFixed(0) + ' cmH2O')} (${sm.mode}, from the trace)`);
+    else if (fin(sm.press_min)) parts.push(sm.mode === 'CPAP' ? `Pressure ${b('fixed ' + sm.press_max.toFixed(0) + ' cmH2O')} (ramp from ${sm.press_min.toFixed(0)}, from the trace)` : `Pressure ${b('low ' + (fin(sm.press_floor) ? sm.press_floor : sm.press_min).toFixed(0) + ', high ' + sm.press_max.toFixed(0) + ' cmH2O')} (${sm.mode}, from the trace; ramp excluded)`);
     if (fin(sm.epr) && sm.epr > 0) parts.push(`EPR ${b(sm.epr.toFixed(0))}`);
     if (sm.str_found) {
       if (sm.hum_on && sm.hum_on[1] === 0) parts.push(`Humidifier ${b('off')}`); else if (sm.hum) parts.push(`Humidity ${b(rng(sm.hum))}` + (sm.climate && sm.climate[1] > 0 ? ' (Climate Control auto)' : '')); else parts.push('Humidity: not in this STR file');
@@ -235,38 +325,31 @@ const SS = (() => {
     for (const s of nt.sessions) {
       const sp = s.spo2, pu = s.pulse; if (!sp || sp.length < 600) continue;
       const n = sp.length; const valid = new Uint8Array(n); let nv = 0; for (let i = 0; i < n; i++) if (sp[i] > 50) { valid[i] = 1; nv++; } if (nv < 600) continue;
-      const base = new Float32Array(n).fill(NaN); const win = [];
-      for (let i = 0; i < n; i++) { const w = []; for (let k = Math.max(0, i - 120); k <= i; k++) if (valid[k]) w.push(sp[k]); if (w.length) { w.sort((a, b) => a - b); base[i] = w[Math.floor(w.length / 2)]; } }
       const evs = [...s.machine, ...s.app.filter(e => e.label !== 'Flow Limitation Run' && e.label !== 'Large Leak')].sort((a, b) => a.start - b.start);
       const leaks = s.app.filter(e => e.label === 'Large Leak').map(e => [(e.start - s.start) / 1000, (e.start - s.start) / 1000 + e.dur]);
       const pmean = (a, b) => { let t = 0, c = 0; for (let k = Math.max(0, a); k < Math.min(n, b); k++) if (pu && pu[k] > 30) { t += pu[k]; c++; } return c ? t / c : NaN; };
-      const dips = []; let i = 0;
-      while (i < n) {
-        if (valid[i] && sp[i] <= base[i] - 3) {
-          let j = i; while (j < n && valid[j] && sp[j] <= base[j] - 3) j++;
-          if (j - i >= 10) {
-            let mn = 101, k0 = i; for (let k = i; k < j; k++) if (sp[k] < mn) { mn = sp[k]; k0 = k; }
-            const t = new Date(s.start.getTime() + 1000 * i); const pb = pmean(i - 30, i), pa = pmean(k0, k0 + 30);
-            let near = null, off = 0; for (const e of evs) { const o = (t - e.start) / 1000; if (!near || Math.abs(o) < Math.abs(off)) { near = e; off = o; } }
-            const sec = (t - s.start) / 1000; const inLeak = leaks.some(([a, b]) => sec >= a && sec <= b);
-            const rose = Number.isFinite(pb) && Number.isFinite(pa) && pa - pb >= 4; const deepBrief = base[i] - mn >= 6 && j - i < 20 && !rose;
-            const tag = deepBrief ? 'likely sensor (deep, brief, no pulse response)' : rose ? 'pulse rose, consistent with arousal' : 'no pulse response';
-            const link = near && Math.abs(off) <= 90 ? `${near.label} [${near.source}] ${Math.abs(off).toFixed(0)} s ${off > 0 ? 'before' : 'after'}` : 'no scored event within 90 s';
-            dips.push(`  ${hms(t)} dip ${base[i].toFixed(0)} to ${mn.toFixed(0)}% for ${j - i} s, pulse ${Number.isFinite(pb) ? pb.toFixed(0) : '?'} to ${Number.isFinite(pa) ? pa.toFixed(0) : '?'}; ${tag}; nearest event: ${link}${inLeak ? '; during large leak' : ''}`);
-          }
-          i = j;
-        } else i++;
+      const dl = desatEvents(s); const dips = [];
+      for (const d of dl) {
+        const t = new Date(s.start.getTime() + 1000 * d.i0); const pb = d.pulse_before, pa = d.pulse_after;
+        let near = null, off = 0; for (const e of evs) { const o = (t - e.start) / 1000; if (!near || Math.abs(o) < Math.abs(off)) { near = e; off = o; } }
+        const inLeak = leaks.some(([a, b]) => d.i0 >= a && d.i0 <= b); const rose = Number.isFinite(pb) && Number.isFinite(pa) && pa - pb >= 4; const deepBrief = d.base - d.low >= 6 && d.i1 - d.i0 < 20 && !rose;
+        const tag = d.motion ? 'likely sensor: hand moving' : deepBrief ? 'likely sensor (deep, brief, no pulse response)' : rose ? 'pulse rose, consistent with arousal' : 'no pulse response';
+        const link = near && Math.abs(off) <= 90 ? `${near.label} [${near.source}] ${Math.abs(off).toFixed(0)} s ${off > 0 ? 'before' : 'after'}` : 'no scored event within 90 s';
+        dips.push(`  ${hms(t)} dip ${d.base.toFixed(0)} to ${d.low.toFixed(0)}% for ${d.i1 - d.i0} s, pulse ${Number.isFinite(pb) ? pb.toFixed(0) : '?'} to ${Number.isFinite(pa) ? pa.toFixed(0) : '?'}; ${tag}; nearest event: ${link}${inLeak ? '; during large leak' : ''}`);
       }
+      const nmov = dl.filter(d => d.motion).length;
       let resp = 0, followed = 0;
       for (const e of s.machine) { const a = Math.floor((e.start - s.start) / 1000); if (a < 0 || a >= n) continue; let b0 = [], mn = 101; for (let k = Math.max(0, a - 60); k < a; k++) if (valid[k]) b0.push(sp[k]); for (let k = a; k < Math.min(n, a + 90); k++) if (valid[k] && sp[k] < mn) mn = sp[k]; if (mn > 100) continue; resp++; if (b0.length) { b0.sort((x, y) => x - y); if (b0[Math.floor(b0.length / 2)] - mn >= 3) followed++; } }
       const hours = nv / 3600;
-      out.push(`Session ${fmtTime(s.start)} (${hours.toFixed(1)} h of oximetry): ${dips.length} desaturations of 3% or more lasting 10 s or longer (${(dips.length / hours).toFixed(1)}/h by this strict count); ${followed} of ${resp} machine-scored events were followed by a 3% drop within 90 s.`);
+      out.push(`Session ${fmtTime(s.start)} (${hours.toFixed(1)} h of oximetry): ${dips.length} desaturations of 3% or more lasting 10 s or longer, ${nmov} of them during hand movement (left out of ODI); ODI ${((dips.length - nmov) / hours).toFixed(1)}/h; ${followed} of ${resp} machine-scored events were followed by a 3% drop within 90 s.`);
       out.push(...(dips.length ? dips : ['  no 3% desaturations']));
       for (const [a, b] of leaks) { let mn = 101, t = 0, c = 0; for (let k = Math.floor(a); k < Math.min(n, Math.floor(b)); k++) if (valid[k]) { t += sp[k]; c++; if (sp[k] < mn) mn = sp[k]; } if (c) out.push(`  large leak ${fmtTime(new Date(s.start.getTime() + 1000 * a))} for ${(b - a).toFixed(0)} s: SpO2 min ${mn.toFixed(0)}, mean ${(t / c).toFixed(1)}`); }
+      if (s.motion) { let runs = 0, i2 = 0; const mv = s.motion; while (i2 < n) { if (mv[i2] >= 30) { let j2 = i2; while (j2 < n && mv[j2] >= 10) j2++; runs++; i2 = j2; } else i2++; } out.push(`  movement bursts (ring motion index 30 or more): ${runs} (${(runs / hours).toFixed(1)}/h)`); }
+      if (s.oxAlerts && s.oxAlerts.length) out.push(`  ring vibration alerts fired ${s.oxAlerts.length} time${s.oxAlerts.length !== 1 ? 's' : ''}: ${s.oxAlerts.slice(0, 12).map(fmtTime).join(', ')}`);
       if (pu) { let surges = 0; for (let k = 0; k + 20 < n; k += 10) if (pu[k] > 30 && pu[k + 20] - pu[k] >= 8) surges++; out.push(`  pulse surges of 8 bpm or more within 20 s: ${surges} (${(surges / hours).toFixed(1)}/h), a rough arousal proxy`); }
     }
     return out;
   }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

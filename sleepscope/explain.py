@@ -117,6 +117,12 @@ def overview(nights) -> str:
 
 
 def night(nt) -> str:
+    if getattr(nt, 'summary_only', False):
+        st = nt.stats
+        return ('<p><b>Card was out this night.</b> Only the machine\'s own daily summary exists: '
+                + f"{nt.hours:.1f} h, AHI {st.get('AHI', float('nan')):.2f}, leak 95th {st.get('leak_95', float('nan')):.0f} L/min, pressure 95th {st.get('press_95', float('nan')):.1f} cmH2O. "
+                + 'No flow, pressure or event detail was recorded, so the panels are empty except for ring data if the ring was worn.</p>')
+
     s = nt.stats; ss = nt.sessions; out = []
     mev = [e for x in ss for e in x.machine_events]; aev = [e for x in ss for e in x.app_events]
     # pressure
@@ -161,7 +167,10 @@ def night(nt) -> str:
     if getattr(nt, 'apple', None) and nt.apple.get('stages'):
         a = nt.apple; found, imp = [], []
         found.append(f"Watch: asleep {a['asleep_h']:.1f} h, deep {a['deep_min']:.0f} min, REM {a['rem_min']:.0f} min, awake {a['awake_min']:.0f} min; machine on {nt.hours:.1f} h.")
-        if a['asleep_h'] > nt.hours + 0.5: imp.append(f"About {a['asleep_h'] - nt.hours:.1f} h of sleep had no mask on. That untreated sleep is the easiest gain available.")
+        if np.isfinite(a.get('cover_pct', np.nan)): found.append(f"Mask on for {a['cover_pct']:.0f}% of the Watch's sleep.")
+        if np.isfinite(a.get('bd', np.nan)): found.append(f"Watch Breathing Disturbances {a['bd']:.1f} per hour, against machine AHI {nt.stats.get('AHI', np.nan):.1f}.")
+        if np.isfinite(a.get('cover_pct', np.nan)) and a['cover_pct'] < 90: imp.append(f"About {(100 - a['cover_pct']) * a['asleep_h'] / 100:.1f} h of sleep had no mask on. That untreated sleep is the easiest gain available.")
+        elif a['asleep_h'] > nt.hours + 0.5 and not np.isfinite(a.get('cover_pct', np.nan)): imp.append(f"About {a['asleep_h'] - nt.hours:.1f} h of sleep had no mask on. That untreated sleep is the easiest gain available.")
         else: imp.append("The machine covered the sleep the Watch saw. Compare deep and REM minutes across nights with and without leak; treated sleep should show more of both.")
         out.append(_block('Apple Watch', "Sleep stages from the Watch (motion and heart rate, not EEG, so approximate), its heart rate, and its SpO2 spot checks.", found, imp))
     return "<div style='font-size:12.5px;line-height:1.4'>" + ''.join(out) + "</div>"
@@ -198,6 +207,31 @@ def point(kind, **c) -> str:
         st = c.get('stage', '')
         words = {'Deep': 'Deep sleep, the physically restorative kind. Adults get most of it in the first half of the night.', 'Core': 'Core (light) sleep, the bulk of a normal night.', 'REM': 'REM, dreaming sleep, when muscles relax most and the airway is at its floppiest; events often cluster here.', 'Awake': 'Awake, as judged by the Watch from movement and heart rate.', 'InBed': 'In bed but not asleep.', 'Asleep': 'Asleep (the Watch did not separate stages).'}.get(st, st)
         return f"<b>Apple Watch: {st}</b>, {n} at {t}<br>{words}<br>Ribbon over grey floor is sleep with the mask off: untreated sleep.<br><b>What to do:</b> the ribbon should be covered by the strip. Where it is not, that is the gain available by keeping the mask on."
+    if kind == 'summary':
+        def f(x, fmtx='{:.1f}'):
+            try: return fmtx.format(x) if x is not None and x == x else '?'
+            except Exception: return '?'
+        when = 'The mask on and off times come from the machine.' if c.get('exact') else 'The machine did not record mask times, so the strip is placed at 22:00 for the right length.'
+        return (f"<b>Card was out</b>, {n}<br>The SD card was not in the machine this night, so no breath by breath detail exists. What you see is the machine's own summary, kept in its memory and written to the card later: "
+                f"{f(c.get('hours'), '{:.1f}')} h, AHI {f(c.get('AHI'), '{:.2f}')} (obstructive {c.get('OA', '?')}, central {c.get('CA', '?')}, hypopnea {c.get('H', '?')}), leak 95th {f(c.get('leak_95'), '{:.0f}')} L/min, pressure 95th {f(c.get('press_95'))} cmH2O"
+                + (f", setting {c.get('setting')}" if c.get('setting') else '') + f". {when}<br><b>What to do:</b> keep the card in the machine overnight. Copy it in the morning and put it straight back; nothing needs deleting.")
+    if kind == 'motion':
+        v = c.get('motion', 0); pl = c.get('pulse'); sp = c.get('spo2')
+        extra = []
+        if pl is not None: extra.append(f"pulse {pl:.0f} bpm")
+        if sp is not None: extra.append(f"oxygen low point {sp:.0f}%")
+        return (f"<b>Movement</b>, {n} at {t}<br>The ring's motion sensor peaked at {v:.0f} in these two minutes: the hand moved, which usually means you turned over or briefly woke. A few per night is normal; a cluster of beads is restless sleep."
+                + (f"<br><i>{', '.join(extra)}.</i>" if extra else '') + "<br><b>What to do:</b> an oxygen dip that sits exactly on a bead is probably the sensor being jostled, not the airway. Many beads with pillars or yellow ground under them means the breathing is what is waking you.")
+    if kind == 'pulse':
+        v = c.get('pulse', 0); mx = c.get('pulse_max', v); sp = c.get('spo2'); op = c.get('openness')
+        spread = mx - v
+        if spread >= 12: head, meaning, do = "Pulse jumped", f"average {v:.0f} bpm in these two minutes with a peak of {mx:.0f}. A jump like that in sleep is an arousal: the body woke for a moment, whether or not you remember it.", "look at what is under it. A pillar or a yellow patch means the airway did it; flat green ground with a jump is a leak, a noise, or a position change. Many of these with a low AHI is the picture of fragmented sleep the AHI misses."
+        elif v >= 85: head, meaning, do = "Pulse high for sleep", f"average {v:.0f} bpm. Sleeping heart rate normally sits 10 to 20 below the awake resting rate; a sustained high rate here suggests light or disturbed sleep, or simply early in the night before settling.", "nothing on its own. If it stays high all night across several nights, that is worth mentioning to a doctor."
+        else: head, meaning, do = "Pulse steady", f"average {v:.0f} bpm, peak {mx:.0f}. A low, flat pulse is what deep, undisturbed sleep looks like.", "nothing; this is the goal."
+        extra = []
+        if sp is not None: extra.append(f"oxygen low point {sp:.0f}%")
+        if op is not None: extra.append("breathing " + ("free" if op >= 0.6 else "narrowed" if op >= 0.25 else "stopped"))
+        return f"<b>{head}</b>, {n} at {t}<br>{meaning}" + (f"<br><i>{', '.join(extra)}.</i>" if extra else '') + f"<br><b>What to do:</b> {do}"
     if kind == 'spo2':
         v = c.get('spo2', 0); op = c.get('openness'); pr = c.get('press')
         if v >= 94: head, meaning, do = "Oxygen normal", f"the ring read {v:.0f}% (lowest in these two minutes). 94 and above is normal sleeping oxygen; the line sits high and green.", "nothing; this is what treated sleep looks like."
@@ -215,3 +249,65 @@ def point(kind, **c) -> str:
     detail = f"Openness {op:.2f} (1 is free, 0 is stopped)" + (f", leak {lk:.0f} L/min" if lk else '') + (f", pressure {pr:.1f} cmH2O" if pr is not None else '')
     do = {"breathing freely": "nothing; this is the goal.", "airway narrowing": "yellow stretches are what a slightly higher minimum pressure or less EPR smooths out; if they coincide with a leak pool, fix the seal first. Both are prescriber conversations.", "airflow stopped": "a crater with a pillar is an event already explained by the pillar; a crater without one is worth looking at in the Night tab."}[level]
     return f"<b>{level.capitalize()}</b>, {n} at {t}<br>{meaning}<br><i>{detail}.</i><br><b>What to do:</b> {do}"
+
+
+# ----------------------------------------------------------------------------- one-line captions for quick review
+OVERVIEW_CAPTIONS = {
+    'Usage': 'Hours on the mask each night. Aim for 4 or more every night, 7 or more is better. Dotted line is 4 h.',
+    'AHI': 'Breathing events per hour. Under 5 means treated, under 1 is excellent. Blue is the machine, orange is SleepScope rechecking.',
+    'Machine events': 'Kind of events. Red: airway closed. Violet: brain paused breathing. Orange: shallow breathing. A few of each is normal.',
+    'Set pressure': 'How hard the machine pushed. When the blue 95th dot sits on the red top line, it is hitting its ceiling.',
+    'Leak': 'Air escaping from the mask. Under the dashed 24 line is fine; above it the seal is losing therapy.',
+    'Flow limitation': 'Minutes of partly narrowed breathing. Fewer is better; under 10 minutes a night is good.',
+    'Breathing': 'Breaths per minute and air moved. Steady from night to night is what you want.',
+    'SpO2': 'Blood oxygen from the ring. Mean should stay 94 or higher; ODI (dips per hour) under 5.',
+    'Time at max': 'Share of the night at top pressure. Over a third suggests the ceiling is a step low.',
+}
+NIGHT_CAPTIONS = {
+    'flow': 'Each wiggle is one breath. Flat stretches are pauses; shaded bands mark events.',
+    'press': 'Pressure delivered. A line pinned flat at the top means the machine wanted more.',
+    'leak': 'Air escaping from the mask. Spikes over the dashed line mean the seal broke.',
+    'flowlim': 'How flattened each breath was, 0 round to 1 flat. Bursts mean the airway was sagging.',
+    'vent': 'Each breath against your recent normal. Dips under the lower dashed line are shallow breathing.',
+    'rr': 'Breaths per minute. 12 to 20 is typical; sudden swings follow events or waking.',
+    'tv': 'Size of each breath. Steady is good; drops line up with events.',
+    'mv': 'Air moved per minute. Drops mean less oxygen coming in.',
+    'spo2': 'Blood oxygen from the ring. 94 and up is normal; a drop of 3 or more points is a dip.',
+    'pulse': 'Heart rate from the ring. Sudden jumps are brief wake ups.',
+    'motion': 'Hand movement from the ring. Spikes are turning over; oxygen dips during spikes are often the sensor.',
+    'apple_stage': 'Sleep stage from the Watch: deep, core, REM or awake.',
+    'apple_hr': 'Heart rate and oxygen from the Watch, sampled every few minutes.',
+}
+COLUMN_HELP = {
+    'label': 'The night, dated by the evening it started.', 'hours': 'Hours on the mask. 4 or more is the compliance line; 7 or more is the goal.',
+    'sessions': 'How many times the mask went on. More than 2 means you took it off during the night.', 'mode': 'AutoSet varies pressure; CPAP holds one pressure.',
+    'setting': 'Pressure range set on the machine. From the machine\'s own record when available, otherwise from the trace (marked trace).',
+    'AHI': 'Machine events per hour. Under 5 treated, under 1 excellent.', 'OA': 'Obstructive apneas: airway closed.', 'CA': 'Central apneas: brain paused breathing.',
+    'H': 'Hypopneas: shallow breathing.', 'UA': 'Apneas the machine could not classify.', 'arousals': 'Brief wake ups the machine noticed.',
+    'app_AHI': 'SleepScope\'s own recount from the raw breathing, with ring and leak checks. Usually higher than the machine.',
+    'app_hyp_conf_txt': 'How many of SleepScope\'s hypopneas the ring confirmed with an oxygen dip or pulse jump. Unconfirmed ones are not counted.',
+    'app_leak_excluded': 'Events that happened during a big leak, listed but not counted because the reading is unreliable then.',
+    'app_unflagged': 'Pauses SleepScope found that the machine did not score.', 'app_RDI': 'SleepScope events plus flow limited breaths that ended in a recovery breath, per hour.',
+    'app_flowlim_runs': 'Stretches of 10 s or more of flattened breathing.', 'app_RERA_like': 'Flattened stretches that ended in a big recovery breath, a likely brief wake up.',
+    'press_min': 'Lowest pressure, including the ramp at the start.', 'press_med': 'Typical pressure through the night.', 'press_95': 'Pressure was at or below this 95% of the time.',
+    'press_max': 'Highest pressure.', 'press_at_max_pct': 'Share of the night at the top pressure. Over a third suggests the ceiling is low.', 'epr': 'Exhale relief: how much pressure drops when you breathe out.',
+    'leak_med': 'Typical leak. Near 0 is a good seal.', 'leak_95': 'Leak was at or below this 95% of the time. Under 24 L/min is good.', 'leak_pct_large': 'Share of the night with a big leak over 24 L/min.',
+    'leak_min': 'Minutes of big leak.', 'flowlim_95': 'How flattened the worst breaths were, 0 to 1. Under 0.1 is round, over 0.3 is struggling.',
+    'flowlim_minutes': 'Minutes of flattened breathing.', 'snore_95': 'Snoring level of the loudest stretches. 0 is quiet.',
+    'rr_med': 'Breaths per minute.', 'tv_med': 'Size of a typical breath in mL.', 'mv_med': 'Air moved per minute in liters.',
+    'ti_med': 'Seconds spent breathing in.', 'ie_med': 'Breathing in time compared with breathing out time.', 'pifpef_med': 'Peak inhale speed compared with peak exhale speed.',
+    'periodic_windows': 'Five minute windows with a waxing and waning breathing cycle. 0 is best.',
+    'spo2_mean': 'Average blood oxygen. 94 or higher is normal.', 'spo2_min': 'Lowest oxygen reading. One brief low can be the sensor.',
+    'spo2_pct_lt90': 'Share of the night under 90%. Near 0 is the goal.', 'spo2_pct_lt88': 'Share of the night under 88%. 5 minutes or more is a doctor conversation.',
+    'ODI': 'Oxygen dips of 3 points or more per hour, sensor movement removed. Under 5 is normal.', 'pulse_mean': 'Average heart rate from the ring.',
+    'w_bd': 'Apple Watch Breathing Disturbances per hour, from wrist motion. A trend number, not an AHI; the machine AHI stays the reference.',
+    'w_asleep': 'Hours the Watch scored as asleep.', 'w_cover': 'Share of the Watch\'s sleep that happened with the mask on. 90 or more is the goal.',
+    'w_deeprem': 'Deep plus REM minutes from the Watch. Approximate (wrist motion and heart rate, not brain waves); watch the trend.',
+    'w_hrv': 'Heart rate variability overnight from the Watch. Higher than your own usual is better recovery.', 'w_rr': 'Breathing rate the Watch measured while asleep.',
+}
+
+
+def overview_caption(title):
+    for k, v in OVERVIEW_CAPTIONS.items():
+        if title.startswith(k): return v
+    return ''

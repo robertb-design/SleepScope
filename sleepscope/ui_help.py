@@ -64,15 +64,19 @@ HELP = """
 <li>Wear the ring every night with the CPAP. Charge it during the day.</li>
 <li>In the ring's phone app (ViHealth for Wellue), open the night, choose export or share, and pick <b>CSV</b>. Send the file to the PC (email it to yourself, AirDrop, or the app's PC software).</li>
 <li>Save the CSV into a folder SleepScope watches: the SD card itself, your Dropbox or OneDrive folder, Downloads, or any folder you choose with <b>Companion folder…</b> on the toolbar. Every time a card is loaded, SleepScope finds the ring files there on its own and attaches them by time; the status bar at the bottom reports how many. <b>Import oximeter CSV…</b> is still there for a file somewhere else.</li>
+<li><b>O2 Insight Pro (ring by USB cable).</b> In O2 Insight Pro set the data folder (File, Settings) to Dropbox\\R Barmore\\Sleepscope\\O2 or any folder beside your card. After you click Download there, SleepScope reads the ring's own files directly on the next Open SD card or Reload; no CSV export needed.</li>
+<li><b>Phone copy.</b> Each time a card is opened, SleepScope saves <b>SleepScope card.zip</b> (the last 45 nights) in Dropbox\\SleepScope, or the folder chosen under <b>Phone copy…</b> on the toolbar. The iPhone app opens that file from Dropbox, so the phone never needs to read the SD card. It also carries the ring CSVs it found, so the phone gets everything in one file. If you already have a folder named Sleepscope in Dropbox (including inside your own folder in a team Dropbox), that is the one it uses.</li>
 <li>Look at the Synopsis oxygen section, the SpO2 and pulse panels in the Night tab, and the SpO2 columns in Statistics.</li>
 </ol>
 
-<h2>Step 7. Add Apple Health (optional)</h2>
+<h2>Step 7. Add Apple Watch sleep (optional)</h2>
 <ol>
-<li>On the iPhone open the <b>Health</b> app, tap your profile picture (top right), scroll down and tap <b>Export All Health Data</b>, then <b>Export</b>. It takes a minute and produces <b>export.zip</b>.</li>
-<li>Send export.zip to the PC (AirDrop to a Mac then to the PC, email, or save to iCloud Drive and open it on the PC).</li>
-<li>In SleepScope click <b>Import Apple Health export…</b> and pick export.zip. The file can be several hundred MB; the import takes a minute or two.</li>
-<li>Sleep stages, heart rate, HRV and Watch SpO2 now appear in the Night tab, on the 3D Landscape (the ribbon in front of each strip) and in the Synopsis. Re-import after each new export; it is not remembered between launches.</li>
+<li>Wear the Watch to bed with Sleep tracking on (Watch app, Sleep). Breathing Disturbances fill in on their own on a Series 9, Ultra 2 or later.</li>
+<li>On the iPhone open the <b>Health</b> app, tap your profile picture (top right), scroll down and tap <b>Export All Health Data</b>, then <b>Export</b>. Save <b>export.zip</b> to <b>Dropbox, Sleepscope</b>. Unzipped is fine too; SleepScope reads either.</li>
+<li>That is all. Every Open SD card or Reload finds the newest export in the Sleepscope folder, matches it to each night, and packs the Watch nights into SleepScope card.zip so the phone shows them too. <b>Import Apple Health…</b> still works for a file kept somewhere else.</li>
+<li>What you get: <b>Watch BD</b> (Breathing Disturbances per hour) beside the machine AHI, <b>Mask on % of sleep</b> (how much of the Watch's sleep happened with the mask on, minute by minute), Watch asleep hours, deep plus REM minutes, HRV and breathing rate. They show in the Statistics table, the Night tab, the 3D ribbon and the Synopsis.</li>
+<li>How to read it: the Watch measures wrist motion, not airflow, so its Breathing Disturbances will not match the machine AHI exactly. Use it as a trend, and as the only check on nights the mask comes off. Mask on % below 90 means untreated sleep; that is the first thing to fix.</li>
+<li>Export again every week or two; each export replaces the last.</li>
 </ol>
 
 <h2>Step 8. Record your equipment</h2>
@@ -88,7 +92,7 @@ HELP = """
 <li>Each morning (or each week): card out, into the PC, click <b>Reload</b> (or Open SD card if it is a different folder), read the Synopsis, card back in the machine.</li>
 <li>Before an appointment, click <b>Doctor visit PDF…</b> on the Synopsis tab and print it or bring it on your phone.</li>
 <li>Copy the whole card to a folder on the PC every month or so (for example Documents\\CPAP\\2026-10). Cards fail and get reformatted; the copy is your history.</li>
-<li>When a new SleepScope version is released, run the new SleepScope-Setup.exe; it installs over the old one and your settings, key and saved answers are kept.</li>
+<li>Updates: each time SleepScope opens it checks for a newer version and, if there is one, installs it by itself: a progress bar shows for a few seconds, then it closes, updates and opens again, keeping your settings, key and saved answers. Press <b>Cancel</b> on the progress bar to skip it until the next start. <b>Check for updates</b> in the toolbar does the same on demand. The portable zip version asks instead, since it is not installed. The phone app updates itself when opened.</li>
 </ol>
 
 <h2>The numbers that matter, in plain words</h2>
@@ -107,6 +111,7 @@ HELP = """
 <li>"No sessions found": you picked a folder with no DATALOG inside, or the card has only tonight's partial data. Pick the drive letter itself.</li>
 <li>Installer trouble (source version): <b>install_log.txt</b> in the SleepScope folder says what failed.</li>
 <li>The app closes or shows an error: <b>app_log.txt</b> has the details.</li>
+<li>Updates fail: <b>update_log.txt</b> in the SleepScope folder records every check and download with the exact error. The installer is always at github.com/robertb-design/SleepScope/releases/latest.</li>
 <li>Ask Claude problems: <b>Test connection</b> isolates key and network problems; <b>ask_log.txt</b> records every request.</li>
 <li>Empty 3D tab: the PC's graphics driver does not provide OpenGL; everything else still works.</li>
 </ul>
