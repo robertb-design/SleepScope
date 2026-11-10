@@ -36,7 +36,7 @@ def _settings_runs(nights):
     return runs
 
 
-def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None = None) -> str:
+def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None = None, extra_html: str = '') -> str:
     sel = [n for n in nights if start <= n.date <= end]
     if not sel:
         return '<p>No therapy nights in that range.</p>'
@@ -200,6 +200,8 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
             p(f'Watch Breathing Disturbances: {pairs}. The Watch counts breathing interruptions per hour from wrist motion, so it reads differently from the machine, '
               'which measures airflow at the mask. Use it as a trend across weeks, and as the only check on nights the mask comes off; the machine AHI stays the reference.')
         p('Deep and REM minutes, and a falling overnight heart rate and rising HRV over weeks, are the Watch-side evidence that treated sleep is restorative. Compare nights with the mask on all night against split nights.')
+
+    if extra_html: H_.append(extra_html)
 
     # ---- bottom line
     h2('What this means for you')

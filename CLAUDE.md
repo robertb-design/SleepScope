@@ -47,6 +47,9 @@ Desktop (`sleepscope/`):
 - `synopsis.py`: rule based plain English synopsis for a date range.
 - `explain.py`: plain language for every chart (`overview`, `night`), one line captions
   (`OVERVIEW_CAPTIONS`, `NIGHT_CAPTIONS`), column help (`COLUMN_HELP`), click explanations in 3D (`point`).
+- `equipment.py`: machine and mask profile (QSettings key `equipment`), mask history and the before and after
+  comparison, supply replacement dates, and `analyse` (usage patterns from leak, mask off and on, pressure and AHI,
+  each option tied to the pattern behind it). `ui_equipment.py` is the Equipment tab. Desktop only for now; the phone has no port.
 - `ui_main.py`: main window, toolbar, load worker, phone copy worker (writes `SleepScope card.zip` to the
   Dropbox Sleepscope folder), tables, tabs. `ui_night.py` (per night panels), `ui_landscape.py` (3D),
   `ui_ask.py` (Ask Claude, Anthropic Messages API; `QUICK_QUESTIONS` one click questions and `context_summary`,
