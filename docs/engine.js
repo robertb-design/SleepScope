@@ -328,7 +328,7 @@ const SS = (() => {
   /** Time at each 0.5 cmH2O band from the 2 s Press trace and the events that began there (port of scoring.pressure_profile). */
   const PP_KINDS = [['OA', 'Obstructive Apnea'], ['CA', 'Central Apnea'], ['H', 'Hypopnea'], ['UA', 'Unclassified Apnea']];
   function pressureProfile(nights, width = 0.5) {
-    const bins = {}; const top = { minutes: 0, events: 0, RERA: 0 }, rest = { minutes: 0, events: 0, RERA: 0 };
+    const bins = {}; const top = { minutes: 0, events: 0, RERA: 0, OA: 0 }, rest = { minutes: 0, events: 0, RERA: 0, OA: 0 };
     const band = (p) => Math.floor(p / width + 1e-9); const get = (k) => (bins[k] ||= { lo: k * width, hi: k * width + width - 0.01, minutes: 0, OA: 0, CA: 0, H: 0, UA: 0, RERA: 0 });
     for (const nt of nights) {
       const cmax = nt.str_max || (nt.stats && Number.isFinite(nt.stats.press_max) ? nt.stats.press_max : NaN); const side = (p) => (Number.isFinite(cmax) && p >= cmax - 0.1 ? top : rest);
@@ -336,7 +336,7 @@ const SS = (() => {
         const pr = ss.ch && ss.ch.Press; if (!pr || !pr.length) continue;
         for (let i = 0; i < pr.length; i++) { const p = pr[i]; if (!(p >= 3)) continue; get(band(p)).minutes += 2 / 60; if (Number.isFinite(cmax)) side(p).minutes += 2 / 60; }
         const pAt = (t) => { const i = Math.floor((t - ss.start) / 2000); return i >= 0 && i < pr.length && pr[i] >= 3 ? pr[i] : null; };
-        for (const e of ss.machine) { const k = PP_KINDS.find(([, l]) => l === e.label); if (!k) continue; const p = pAt(e.start); if (p !== null) { get(band(p))[k[0]]++; side(p).events++; } }
+        for (const e of ss.machine) { const k = PP_KINDS.find(([, l]) => l === e.label); if (!k) continue; const p = pAt(e.start); if (p !== null) { get(band(p))[k[0]]++; side(p).events++; if (k[0] === 'OA') side(p).OA++; } }
         for (const e of ss.app) if (e.label === 'Flow Limitation Run' && /RERA/.test(e.detail)) { const p = pAt(e.start); if (p !== null) { get(band(p)).RERA++; side(p).RERA++; } }
       }
     }
@@ -345,6 +345,7 @@ const SS = (() => {
     const tot = top.minutes + rest.minutes; top.pct = tot ? 100 * top.minutes / tot : NaN;
     return { bands: out, top, rest };
   }
+  function reraAtCeiling(t, r) { const allr = t.RERA + r.RERA; return allr >= 5 && t.RERA / allr >= 0.6 && t.rera_rate >= 3 * Math.max(r.rera_rate, 0.01); }
   function pressureProfileText(pp) {
     if (!pp.bands.length) return ''; const tot = pp.bands.reduce((a, b) => a + b.minutes, 0) || 1; const f = (v) => Number.isFinite(v) ? v.toFixed(2) : '';
     const rows = ['band cmH2O\tminutes\t% of time\tOA\tCA\tH\tUA\tevents/h at this pressure\tRERA-like FL runs\tRERA-like/h'];
@@ -360,7 +361,7 @@ const SS = (() => {
     if (!pp.bands.length || !t.minutes) return [[], []]; const f2 = (v) => Number.isFinite(v) ? v.toFixed(1) : 'n/a';
     const found = [`${t.pct.toFixed(0)}% of the time at the top setting. Machine events ran at ${f2(t.rate)} per hour there against ${f2(r.rate)} below it; flow limitation runs ending in a recovery breath ran at ${f2(t.rera_rate)} per hour there against ${f2(r.rera_rate)} below.`];
     const allr = t.RERA + r.RERA; let imp;
-    if (allr >= 5 && t.RERA / allr >= 0.6 && t.rera_rate >= 3 * Math.max(r.rera_rate, 0.01)) imp = [`${t.RERA} of ${allr} recovery-breath runs began at the top setting. The machine raises pressure when breathing flattens, so flattening at the top means it wanted more room and had none. That pattern supports trying a higher ceiling; take these numbers to whoever prescribes your settings and watch leak, centrals and flow limitation if it changes.`];
+    if (reraAtCeiling(t, r)) imp = [`${t.RERA} of ${allr} recovery-breath runs began at the top setting. The machine raises pressure when breathing flattens, so flattening at the top means it wanted more room and had none. That pattern supports trying a higher ceiling; take these numbers to whoever prescribes your settings and watch leak, centrals and flow limitation if it changes.`];
     else if (t.pct >= 33) imp = ['Over a third of the time at the top, but events and flow limitation do not gather there, so the ceiling is not holding you back yet. Keep watching.'];
     else imp = ['The ceiling is not where problems happen. Pressure has room; no change is pointed to.'];
     imp.push('Events are counted at the pressure where they began. AutoSet raises pressure after events, so lower bands collect events partly for that reason; it does not mean low pressure caused them.');
@@ -396,6 +397,6 @@ const SS = (() => {
     }
     return out;
   }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw, pressureProfile, pressureProfileText, pressureReading, setReraThr: (v) => { RERA_THR = v; } };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw, pressureProfile, pressureProfileText, pressureReading, reraAtCeiling, setReraThr: (v) => { RERA_THR = v; } };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

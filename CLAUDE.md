@@ -45,7 +45,8 @@ Desktop (`sleepscope/`):
   `night.apple`: stages, Breathing Disturbances, mask coverage of Watch sleep), `watch_fields` (the `w_*` columns), `to_sync`.
   Exports in the companion folders are found automatically (`find_companion_files`), newest wins.
 - `synopsis.py`: rule based plain English synopsis for a date range.
-- `explain.py`: plain language for every chart (`overview`, `night`), one line captions
+- `explain.py`: plain language for every chart (`overview`, `night`; `overview_items` gives one {title, what, found, imp}
+  per chart, shown beside each chart on the desktop Overview and under each chart on the phone via `EX.overviewItems`), one line captions
   (`OVERVIEW_CAPTIONS`, `NIGHT_CAPTIONS`), column help (`COLUMN_HELP`), click explanations in 3D (`point`).
 - `ui_main.py`: main window, toolbar, load worker, phone copy worker (writes `SleepScope card.zip` to the
   Dropbox Sleepscope folder), tables, tabs. `ui_night.py` (per night panels), `ui_landscape.py` (3D),

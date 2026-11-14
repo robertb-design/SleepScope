@@ -132,7 +132,14 @@ function drawPressure() {
 function drawOverview() {
   try { drawPressure(); } catch (e) { console.warn(e); }
   const k = Math.max(1, Math.ceil(nights.length / 10)); const x = nights.map((n, i) => (nights.length > 6 ? SS.label(n.date).split(' ').pop() : SS.label(n.date)));
-  const tickvals = x.filter((_, i) => i % k === 0 || i === x.length - 1); const S = nights.map(n => n.stats); $('ovexplain').innerHTML = EX.overview(nights);
+  const tickvals = x.filter((_, i) => i % k === 0 || i === x.length - 1); const S = nights.map(n => n.stats);
+  // each chart gets its own explanation underneath: what it is, your result, what to do; the rest go in the fold
+  const items = EX.overviewItems(nights); const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const SIMPLE = { 'Usage (hours)': 'Hours on the mask each night. Aim for 4 or more every night, 7 or more is better. Dashed line is 4 h.', 'AHI: machine vs app': 'Breathing events per hour. Under 5 means treated, under 1 is excellent. Blue is the machine, orange is SleepScope rechecking.', 'Leak': 'Air escaping from the mask on the worst 5% of the night. Under the dashed 24 line is fine; above it the seal is losing therapy.', 'Time at pressure, events per hour at each pressure': 'Top: hours at each pressure. Bottom: events per hour at that pressure; red is machine events, violet is flattened breathing that ends in a recovery breath.' };
+  const panel = (it) => it ? `<h4>${esc(it.title)}</h4><p><b>What it is.</b> ${esc(SIMPLE[it.title] || it.what)}</p>` + (it.found.length ? `<p><b>Your result.</b> ${esc(it.found.join(' '))}</p>` : '') + (it.imp.length ? `<p class="do"><b>What to do.</b> ${esc(it.imp.join(' '))}</p>` : '') : '';
+  const byT = Object.fromEntries(items.map(it => [it.title, it])); const used = ['Usage (hours)', 'AHI: machine vs app', 'Leak', 'Time at pressure, events per hour at each pressure'];
+  $('ex-usage').innerHTML = panel(byT['Usage (hours)']); $('ex-ahi').innerHTML = panel(byT['AHI: machine vs app']); $('ex-leak').innerHTML = panel(byT['Leak']); $('ex-pressure').innerHTML = panel(byT[used[3]]);
+  $('ovexplain').innerHTML = items.filter(it => !used.includes(it.title)).map(it => `<div class="ovex">${panel(it)}</div>`).join('');
   Plotly.react('ch-usage', [{ type: 'bar', x, y: nights.map(n => +n.hours.toFixed(2)), marker: { color: C.blue }, name: 'Hours' }], { title: { text: 'Usage (hours), dashed = 4 h', font: { size: 13 } }, margin: { l: 34, r: 10, t: 30, b: 60 }, shapes: [{ type: 'line', x0: -0.5, x1: x.length - 0.5, y0: 4, y1: 4, line: { dash: 'dash', color: '#52514e', width: 1 } }], yaxis: { rangemode: 'tozero' }, xaxis: { tickangle: -45, tickvals, tickfont: { size: 10 } } }, { displayModeBar: false, responsive: true });
   Plotly.react('ch-ahi', [
     { type: 'bar', x, y: S.map(s => +s.AHI.toFixed(2)), marker: { color: C.blue }, name: 'AHI machine' },

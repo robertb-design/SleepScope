@@ -407,7 +407,7 @@ def pressure_profile(nights, width=PRESSURE_BIN):
     runs ending in a recovery breath), events (OA+CA+H+UA) and rate (events per hour at that pressure), rera_rate.
     Samples under 3 cmH2O (mask off, start up) are ignored. Pressure at an event is the trace at its onset.
     """
-    bins = {}; top = dict(minutes=0.0, events=0, RERA=0); rest = dict(minutes=0.0, events=0, RERA=0)
+    bins = {}; top = dict(minutes=0.0, events=0, RERA=0, OA=0); rest = dict(minutes=0.0, events=0, RERA=0, OA=0)
     def band(p): return int(np.floor(p / width + 1e-9))
     def get(k): return bins.setdefault(k, dict(lo=k * width, hi=k * width + width - 0.01, minutes=0.0, OA=0, CA=0, H=0, UA=0, RERA=0))
     for nt in nights:
@@ -430,7 +430,9 @@ def pressure_profile(nights, width=PRESSURE_BIN):
                 key = next((k for k, lab in PP_KINDS if e.label == lab), None)
                 if not key: continue
                 p = p_at(e.start)
-                if p is not None: get(band(p))[key] += 1; side(p)['events'] += 1
+                if p is not None:
+                    get(band(p))[key] += 1; side(p)['events'] += 1
+                    if key == 'OA': side(p)['OA'] += 1
             for e in ss.app_events:
                 if e.label == 'Flow Limitation Run' and 'RERA' in e.detail:
                     p = p_at(e.start)
@@ -445,6 +447,12 @@ def pressure_profile(nights, width=PRESSURE_BIN):
     tot = top['minutes'] + rest['minutes']; top['pct'] = 100 * top['minutes'] / tot if tot else np.nan
     pressure_profile.last_split = (top, rest)                       # read by pressure_profile_text and the charts
     return out
+
+
+def rera_at_ceiling(top, rest):
+    """True when recovery-breath runs clearly gather at the top setting (same test on the phone)."""
+    allr = top['RERA'] + rest['RERA']
+    return allr >= 5 and top['RERA'] / allr >= 0.6 and top['rera_rate'] >= 3 * max(rest['rera_rate'], 0.01)
 
 
 def ceiling_split(nights):

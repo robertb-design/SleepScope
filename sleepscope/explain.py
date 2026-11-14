@@ -16,10 +16,21 @@ def _block(title, what, found, improve):
     return h
 
 
-def overview(nights) -> str:
+def overview(nights, items=None) -> str:
     if not nights: return ''
+    def _ob(t, w, f, i):
+        if items is not None: items.append(dict(title=t, what=w, found=list(f), imp=list(i)))
+        return _block(t, w, f, i)
     S = [n.stats for n in nights]; L = [n.label for n in nights]; N = len(nights)
     def g(k): return np.array([s.get(k, np.nan) for s in S], dtype=float)
+    def which(lst):                                                # a count reads easier than a list of eleven dates
+        if len(lst) <= 3: return ', '.join(lst)
+        miss = [l for l in L if l not in lst]
+        return f"{len(lst)} of {N} nights" + (f" (all but {', '.join(miss)})" if 0 < len(miss) <= 2 else '')
+    from . import scoring as _sc
+    _sel = [n for n in nights if n.sessions]
+    top, rest = _sc.ceiling_split(_sel) if _sel else (dict(minutes=0, OA=0, RERA=0, rera_rate=np.nan), dict(minutes=0, OA=0, RERA=0, rera_rate=np.nan))
+    fl_at_top = bool(top['minutes']) and _sc.rera_at_ceiling(top, rest)
     out = []
     # ---- usage
     h = g('hours'); low = [L[i] for i in range(N) if h[i] < 4]; split = [L[i] for i in range(N) if S[i]['sessions'] > 1]
@@ -30,7 +41,7 @@ def overview(nights) -> str:
     if h.mean() < 6: imp.append("Hours are the single biggest lever. Aim for the mask on at lights-out and left on until you get up; every untreated hour is an hour of the original apnea.")
     if split: imp.append("For the mid-night gaps, note what woke you (leak noise, dry mouth, pressure, bathroom). Dry mouth with the mask off points to mouth breathing: a chin strap or mouth tape, or a full-face mask. Pressure discomfort on falling asleep: ask about EPR or a longer ramp.")
     if not imp: imp.append("Usage is where it should be. Keep the routine.")
-    out.append(_block('Usage (hours)', "How long the mask was on each night. The dashed line is 4 hours, the minimum insurers and clinics count as a used night; most people feel the benefit at six or more.", found, imp))
+    out.append(_ob('Usage (hours)', "How long the mask was on each night. The dashed line is 4 hours, the minimum insurers and clinics count as a used night; most people feel the benefit at six or more.", found, imp))
     # ---- AHI
     ahi = g('AHI'); app = g('app_AHI'); hi = [L[i] for i in range(N) if ahi[i] >= 5]
     found, imp = [], []
@@ -41,7 +52,7 @@ def overview(nights) -> str:
     if big: found.append(f"The app count runs well above the machine's on {', '.join(big)}: many breaths shrank by a third or more without the machine calling an event, which usually means flow limitation or shallow breathing rather than closures.")
     if hi: imp.append("A night over 5 needs a reason: look at that night's leak first (leak hides and causes events), then at whether events cluster in one part of the night (position, REM) or spread evenly (pressure short). Take a run of such nights to the prescriber with the Statistics export.")
     else: imp.append("Nothing to fix here; the treated hours are controlled. If you feel unrefreshed anyway, the flow limitation and leak charts are where to look, not this one.")
-    out.append(_block('AHI: machine vs app', "Breathing events per hour of use. Blue is what the machine scored (apneas plus hypopneas). Orange is the app re-scoring from the raw airflow, which counts every dip of 30% or more and so is always higher; read it as a ceiling. Violet is the app's RDI, which adds flow-limited runs ending in a recovery breath. Under 5 is normal; 5 to 15 mild; over 15 needs attention.", found, imp))
+    out.append(_ob('AHI: machine vs app', "Breathing events per hour of use. Blue is what the machine scored (apneas plus hypopneas). Orange is the app re-scoring from the raw airflow, which counts every dip of 30% or more and so is always higher; read it as a ceiling. Violet is the app's RDI, which adds flow-limited runs ending in a recovery breath. Under 5 is normal; 5 to 15 mild; over 15 needs attention.", found, imp))
     # ---- event mix
     OA, CA, H = g('OA'), g('CA'), g('H'); tot = OA.sum() + CA.sum() + H.sum()
     found, imp = [], []
@@ -50,22 +61,34 @@ def overview(nights) -> str:
     if cen: found.append(f"Centrals dominated on {', '.join(cen)}.")
     elif CA.sum(): found.append("Centrals are a minority and scattered, the pattern of normal post-sigh pauses.")
     if cen: imp.append("Centrals outnumbering obstructives on CPAP can be caused by the pressure itself. This is for the sleep physician, not a home adjustment; bring the Events export.")
-    elif OA.sum() > H.sum() and np.nanmean(g('press_at_max_pct')) > 20: imp.append("Obstructives while the machine sits at its ceiling means it wanted more pressure than allowed. Ask whether the maximum can come up a step.")
+    elif OA.sum() and top['minutes'] and (top['OA'] + rest['OA']):
+        ta = top['OA'] / (top['minutes'] / 60) if top['minutes'] else 0; ra = rest['OA'] / (rest['minutes'] / 60) if rest['minutes'] else 0
+        if top['OA'] >= 3 and ta > 1.5 * ra: imp.append(f"{top['OA']} of {top['OA'] + rest['OA']} obstructive apneas began with the machine already at its ceiling, more often per hour than below it. It wanted more pressure than allowed; ask whether the maximum can come up a step.")
+        else: imp.append(f"Only {top['OA']} of {top['OA'] + rest['OA']} obstructive apneas began at the ceiling; the rest began lower, where the machine still had room to respond. The ceiling is not what lets them through, and at this count nothing needs changing.")
     else: imp.append("The mix is unremarkable. Hypopneas (partial narrowing) respond to a slightly higher minimum pressure or EPR change if they ever climb; obstructives to the maximum.")
-    out.append(_block('Machine events by type', "What kind of events the machine saw. Red: obstructive apnea, the airway closed. Violet: central apnea, the airway open but no breathing effort, the brain paused. Orange: hypopnea, airflow partly reduced. A few centrals after a sigh are normal; many on CPAP are a question for the doctor.", found, imp))
+    out.append(_ob('Machine events by type', "What kind of events the machine saw. Red: obstructive apnea, the airway closed. Violet: central apnea, the airway open but no breathing effort, the brain paused. Orange: hypopnea, airflow partly reduced. A few centrals after a sigh are normal; many on CPAP are a question for the doctor.", found, imp))
     # ---- pressure
     pmin, pmax, p95, pmed, atmax = g('press_min'), g('press_max'), g('press_95'), g('press_med'), g('press_at_max_pct')
     found, imp = [], []
     modes = {s['mode'] for s in S}; chg = [L[i] for i in range(1, N) if abs(pmax[i] - pmax[i - 1]) > 0.5 or S[i]['mode'] != S[i - 1]['mode']]
-    if chg: found.append(f"Settings changed before {', '.join(chg)}.")
+    sets = [S[i].get('setting') or '' for i in range(N)]
+    runs = []
+    for i in range(N):
+        if not sets[i]: continue
+        if runs and runs[-1][0] == sets[i]: runs[-1][2] = L[i]
+        else: runs.append([sets[i], L[i], L[i]])
+    if len(runs) > 1: chg = [r[1] for r in runs[1:]]; found.append('Settings: ' + '; '.join(f"{r[0]} ({r[1]}{' to ' + r[2] if r[2] != r[1] else ''})" for r in runs) + '.')
+    elif runs: chg = []
+    elif chg: found.append(f"Settings changed before {', '.join(chg)}.")
     ceiling = [L[i] for i in range(N) if S[i]['mode'] == 'AutoSet' and atmax[i] > 20]
-    if ceiling: found.append(f"On AutoSet nights the machine sat at its ceiling more than a fifth of the time on {', '.join(ceiling)}; it wanted more than it was allowed.")
+    if ceiling: found.append(f"At its ceiling more than a fifth of the time on {which(ceiling)}.")
     if 'AutoSet' in modes: found.append(f"95th percentile pressure on AutoSet nights averages {np.nanmean([p95[i] for i in range(N) if S[i]['mode'] == 'AutoSet']):.1f} cmH2O; that is the number a fixed setting is usually based on.")
-    if ceiling and not any(ahi[i] >= 5 for i in range(N) if L[i] in ceiling): imp.append("Hitting the ceiling without events getting through is tolerable; hitting it with flow limitation rising is the case for raising the maximum by 1 cmH2O. Either way it is a prescriber conversation.")
+    if ceiling and fl_at_top: imp.append("Events are not getting through, but flattened breathing gathers at the ceiling (see Time at pressure at the bottom). That is the case for raising the maximum by 1 cmH2O; a prescriber conversation.")
+    elif ceiling and not any(ahi[i] >= 5 for i in range(N) if L[i] in ceiling): imp.append("Hitting the ceiling without events or flattened breathing getting through is tolerable. Watch Time at pressure at the bottom; if flattening starts to gather at the top, that is the case for raising the maximum by 1 cmH2O.")
     elif ceiling: imp.append("Ceiling plus events getting through is the clearest signal that the maximum is set too low. Ask for it to be raised.")
     if chg: imp.append("Hold each setting at least a week before judging it; single nights swing too much.")
     if not imp: imp.append("Pressure has room to work and is not being capped. Nothing to change.")
-    out.append(_block('Set pressure', "The pressure the machine delivered each night: the shaded band runs from the lowest to the highest it used, green is the median (half the night below it), blue the 95th percentile (it was above this only 5% of the time). The red dashed line is the highest reached; on AutoSet nights that is usually the ceiling you set.", found, imp))
+    out.append(_ob('Set pressure', "The pressure the machine delivered each night: the shaded band runs from the lowest to the highest it used, green is the median (half the night below it), blue the 95th percentile (it was above this only 5% of the time). The red dashed line is the highest reached; on AutoSet nights that is usually the ceiling you set.", found, imp))
     # ---- leak
     l95, lpct = g('leak_95'), g('leak_pct_large'); bad = [(L[i], lpct[i]) for i in range(N) if lpct[i] > 5]
     found, imp = [], []
@@ -73,7 +96,7 @@ def overview(nights) -> str:
     else: found.append(f"Every night's 95th percentile stayed under 24 L/min (worst {np.nanmax(l95):.0f} on {L[int(np.nanargmax(l95))]}). The mask fits.")
     if bad: imp.append("Open the worst night and look at when leak started. Starting mid-night and holding steady: mouth opening, so a chin strap, mouth tape, or a full-face mask. Spiking and recovering: the cushion moving on a position change; re-seat the mask while lying in your sleeping position, check the cushion for wear (replace at 1 to 3 months), and loosen rather than tighten, since over-tight straps buckle the cushion.")
     else: imp.append("Keep the cushion clean (daily wipe) and replace it on schedule; a seal that is good now drifts as the silicone ages.")
-    out.append(_block('Leak', "Air escaping around the mask or from the mouth, beyond the vent the mask is designed to have. Aqua is the median, orange the 95th percentile. Above the red line (24 L/min) the machine cannot hold its pressure or score events reliably, so therapy is being lost, not just data.", found, imp))
+    out.append(_ob('Leak', "Air escaping around the mask or from the mouth, beyond the vent the mask is designed to have. Aqua is the median, orange the 95th percentile. Above the red line (24 L/min) the machine cannot hold its pressure or score events reliably, so therapy is being lost, not just data.", found, imp))
     # ---- flow limitation
     f95, fmin = g('flowlim_95'), g('flowlim_minutes'); hiFL = [L[i] for i in range(N) if f95[i] >= 0.3]
     found, imp = [], []
@@ -83,8 +106,9 @@ def overview(nights) -> str:
         trend = np.polyfit(np.arange(N), f95, 1)[0] * N
         if trend > 0.08: found.append("Rising across the range as the pressure ceiling came down.")
     if hiFL or np.nanmean(f95) >= 0.2: imp.append("Flow limitation is the number that answers 'why am I tired with a good AHI'. It responds to a slightly higher minimum pressure (the airway is splinted before it narrows) or to EPR being reduced from 3 to 2 or 1; both are prescriber conversations. Nasal congestion and alcohol in the evening both raise it.")
+    elif fl_at_top: imp.append("Low overall, but the runs that do happen gather at the top setting (see Time at pressure at the bottom). The airway is held open well except where the machine runs out of room.")
     else: imp.append("Low. The airway is being held open cleanly; nothing to change.")
-    out.append(_block('Flow limitation', "Narrowing of the airway short of an event: the breath gets through but flattened, like breathing through a straw that is being pinched. It does not count in AHI yet it fragments sleep, because each run of flattened breaths tends to end in a small arousal. 0 is none; above 0.2 for long stretches is worth attention.", found, imp))
+    out.append(_ob('Flow limitation', "Narrowing of the airway short of an event: the breath gets through but flattened, like breathing through a straw that is being pinched. It does not count in AHI yet it fragments sleep, because each run of flattened breaths tends to end in a small arousal. 0 is none; above 0.2 for long stretches is worth attention.", found, imp))
     # ---- breathing mechanics
     rr, tv, mv = g('rr_med'), g('tv_med'), g('mv_med')
     found, imp = [], []
@@ -93,30 +117,38 @@ def overview(nights) -> str:
     if odd and len(odd) < N: found.append(f"Outside the usual sleep ranges on {', '.join(odd)}.")
     elif odd: found.append("Slightly outside the usual sleep ranges most nights; machine volume estimates are approximate.")
     imp.append("These rarely need action on their own. Minute ventilation well above 8 night after night can mean over-breathing from pressure that is too high; well below 5 suggests shallow breathing. Mention a persistent shift to the prescriber; a single night means nothing.")
-    out.append(_block('Breathing: rate and volume', "How you breathed while on therapy: breaths per minute, air per breath (tidal volume), and air per minute. Adults asleep typically run 12 to 20 breaths a minute, 400 to 600 mL a breath, 5 to 8 litres a minute.", found, imp))
+    out.append(_ob('Breathing: rate and volume', "How you breathed while on therapy: breaths per minute, air per breath (tidal volume), and air per minute. Adults asleep typically run 12 to 20 breaths a minute, 400 to 600 mL a breath, 5 to 8 litres a minute.", found, imp))
     # ---- SpO2 or time at max
     sp = g('spo2_mean')
     if np.isfinite(sp).any():
         smin, lt90, odi = g('spo2_min'), g('spo2_pct_lt90'), g('ODI'); found, imp = [], []
         found.append(f"Mean SpO2 {np.nanmean(sp):.1f}%, lowest reading {np.nanmin(smin):.0f}%, ODI {np.nanmean(odi):.1f} per hour.")
+        ringN = int(np.isfinite(sp).sum())
+        if ringN < N: found.append(f"Ring worn on {ringN} of {N} nights.")
         lowN = [L[i] for i in range(N) if smin[i] < 88 or lt90[i] > 2 or odi[i] >= 10]
         if lowN: found.append(f"Desaturation worth a look on {', '.join(lowN)}.")
         if lowN: imp.append("Open those nights and see whether the dips line up with flagged events (pressure short) or with leak, or with nothing (position, or the ring slipped). Five minutes or more under 88% in a night is the threshold physicians act on; bring it to the prescriber.")
         else: imp.append("Oxygen is holding. This is the number that says the therapy is protecting you; nothing to change.")
-        out.append(_block('SpO2 and ODI', "Blood oxygen from the ring. Mean and minimum SpO2, and ODI, the number of 3% dips per hour. ODI under 5 and almost no time under 90% is the goal; this is the clearest measure of whether events are harming you.", found, imp))
+        if ringN < 0.8 * N: imp.append(f"Wear the ring every night. With {ringN} of {N} nights, a pattern cannot be told from chance, and the ring is what confirms or clears each event.")
+        out.append(_ob('SpO2 and ODI', "Blood oxygen from the ring. Mean and minimum SpO2, and ODI, the number of 3% dips per hour. ODI under 5 and almost no time under 90% is the goal; this is the clearest measure of whether events are harming you.", found, imp))
     else:
         found, imp = [], []
         hi_pct = [L[i] for i in range(N) if S[i]['mode'] == 'AutoSet' and atmax[i] > 20]
-        if hi_pct: found.append(f"At the ceiling more than 20% of the time on {', '.join(hi_pct)}.")
+        if hi_pct: found.append(f"At the ceiling more than 20% of the time on {which(hi_pct)}.")
         per = g('periodic_windows'); pw = [L[i] for i in range(N) if per[i] >= 3]
         if pw: found.append(f"Several periodic-breathing windows on {', '.join(pw)}.")
         elif per.sum() == 0: found.append("No periodic (Cheyne-Stokes) breathing pattern found.")
         imp.append("Add an oximeter to replace this panel with oxygen data; AHI counts events but cannot say what they did to your oxygen." + (" If periodic windows cluster on one night, open it and look for a slow wax-and-wane in the ventilation trace; that pattern belongs in front of a physician." if pw else ''))
-        out.append(_block('Time at maximum pressure, periodic breathing', "Blue bars: the share of each night the machine spent pinned at its ceiling (fixed-pressure nights show 100% by definition). Magenta: five-minute windows where breathing waxed and waned on a 30 to 90 second cycle, the Cheyne-Stokes pattern.", found, imp))
+        out.append(_ob('Time at maximum pressure, periodic breathing', "Blue bars: the share of each night the machine spent pinned at its ceiling (fixed-pressure nights show 100% by definition). Magenta: five-minute windows where breathing waxed and waned on a 30 to 90 second cycle, the Cheyne-Stokes pattern.", found, imp))
     fp, ip = pressure_reading(nights)
-    if fp: out.append(_block('Time at pressure, events per hour at each pressure', "Left: hours spent at each half cmH2O of pressure across the nights shown, from the machine's pressure trace. Right: events per hour of time spent at that pressure (red, machine scored) and flow limitation runs ending in a recovery breath (violet).", fp, ip))
+    if fp: out.append(_ob('Time at pressure, events per hour at each pressure', "Left: hours spent at each half cmH2O of pressure across the nights shown, from the machine's pressure trace. Right: events per hour of time spent at that pressure (red, machine scored) and flow limitation runs ending in a recovery breath (violet).", fp, ip))
     return "<div style='font-size:12.5px;line-height:1.4'>" + ''.join(out) + "</div>"
 
+
+
+def overview_items(nights):
+    """The overview explanations as a list of {title, what, found, imp}, one per chart, for the side by side layout."""
+    items = []; overview(nights, items); return items
 
 def night(nt) -> str:
     if getattr(nt, 'summary_only', False):
@@ -323,7 +355,7 @@ def pressure_reading(nights):
     found = [f"{top['pct']:.0f}% of the time at the top setting. Machine events ran at {f2(top['rate'])} per hour there against {f2(rest['rate'])} below it; "
              f"flow limitation runs ending in a recovery breath ran at {f2(top['rera_rate'])} per hour there against {f2(rest['rera_rate'])} below."]
     allr = top['RERA'] + rest['RERA']
-    if allr >= 5 and top['RERA'] / allr >= 0.6 and top['rera_rate'] >= 3 * max(rest['rera_rate'], 0.01):
+    if scoring.rera_at_ceiling(top, rest):
         imp = [f"{top['RERA']} of {allr} recovery-breath runs began at the top setting. The machine raises pressure when breathing flattens, so flattening at the top means it wanted more room and had none. "
                "That pattern supports trying a higher ceiling; take these numbers to whoever prescribes your settings and watch leak, centrals and flow limitation if it changes."]
     elif top['pct'] >= 33:
