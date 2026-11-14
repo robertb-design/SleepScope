@@ -103,6 +103,12 @@ class BarAxis(pg.AxisItem):
         return [self.labels[int(v)] if 0 <= int(round(v)) < len(self.labels) and abs(v - round(v)) < 0.01 else '' for v in values]
 
 
+def _wrap(text, width=78):
+    """Chart captions do not wrap by themselves; long ones widened the column past the window."""
+    import textwrap
+    return '<br>'.join(textwrap.wrap(text, width)) if text else ''
+
+
 def draw_pressure_profile(gl, row, nights, scope):
     """Two charts: hours spent at each 0.5 cmH2O band, and events per hour of time at that band (machine events, RERA-like runs)."""
     prof = scoring.pressure_profile(nights)
@@ -116,7 +122,7 @@ def draw_pressure_profile(gl, row, nights, scope):
     rr = np.array([b['rera_rate'] if np.isfinite(b['rera_rate']) and b['minutes'] >= 30 else 0 for b in prof])
     def mk(col, title):
         p = gl.addPlot(row=row, col=col); style_plot(p); cap = explain.overview_caption(title)
-        p.setTitle(f"<span style='font-size:10pt;color:#0b0b0b'>{title} ({scope})</span>" + (f"<br><span style='font-size:8.5pt;color:#52514e'>{cap}</span>" if cap else ''))
+        p.setTitle(f"<span style='font-size:10pt;color:#0b0b0b'>{title} ({scope})</span>" + (f"<br><span style='font-size:8.5pt;color:#52514e'>{_wrap(cap)}</span>" if cap else ''))
         p.setLabel('bottom', 'pressure, cmH2O'); p.setMouseEnabled(x=False, y=False); p.hideButtons(); p.setXRange(xs.min() - 0.5, xs.max() + 0.5, padding=0)
         p.getAxis('bottom').setTicks([[(b['lo'] + 0.25, f"{b['lo']:g}") for b in prof]]); return p
     p = mk(0, 'Time at pressure'); p.setLabel('left', 'hours')
@@ -129,30 +135,36 @@ def draw_pressure_profile(gl, row, nights, scope):
     p.addItem(pg.BarGraphItem(x=xs + 0.11, height=rr, width=0.2, brush=pg.mkBrush(C['violet']), pen=pg.mkPen('w')))
     p.setYRange(0, max(1, float(max(rate.max(), rr.max()))) * 1.2)
     if top['minutes']:
-        t = pg.TextItem(f"At the top: {top['pct']:.0f}% of time, events {top['rate']:.1f}/h, RERA-like {top['rera_rate']:.1f}/h\nBelow it: events {rest['rate']:.1f}/h, RERA-like {rest['rera_rate']:.1f}/h",
-                        color=C['text2'], anchor=(0, 0)); t.setPos(xs.min() - 0.45, p.viewRange()[1][1]); p.addItem(t)
+        f = lambda v: f'{v:.1f}' if np.isfinite(v) else 'n/a'
+        p.setTitle(p.titleLabel.text + f"<br><span style='font-size:9pt;color:#1d4f91'><b>At the top setting</b> ({top['pct']:.0f}% of the time): events {f(top['rate'])}/h, RERA-like {f(top['rera_rate'])}/h"
+                   f"<br><b>Below it:</b> events {f(rest['rate'])}/h, RERA-like {f(rest['rera_rate'])}/h</span>")
 
 
 class OverviewView(QtWidgets.QWidget):
     night_clicked = QtCore.Signal(int)
+    ROW_H = 310                                                    # pixels per row of charts; the chart area scrolls
     def __init__(self):
         super().__init__(); lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(4, 4, 4, 4)
         split = QtWidgets.QSplitter(QtCore.Qt.Vertical); lay.addWidget(split, 1)
-        self.gl = pg.GraphicsLayoutWidget(); self.gl.setBackground('w'); split.addWidget(self.gl)
+        # charts get a fixed height each and scroll, instead of being squeezed into the window
+        self.gl = pg.GraphicsLayoutWidget(); self.gl.setBackground('w'); self.gl.ci.layout.setVerticalSpacing(18); self.gl.ci.layout.setHorizontalSpacing(24)
+        self.scroll = QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame); self.scroll.setWidget(self.gl)
+        self.scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn); split.addWidget(self.scroll)
         self.explain = QtWidgets.QTextBrowser(); self.explain.setStyleSheet('font-size:12.5px; padding:6px; border-top:1px solid #e6e5e2'); split.addWidget(self.explain)
-        split.setSizes([620, 260])
+        split.setStretchFactor(0, 4); split.setStretchFactor(1, 1); split.setSizes([700, 170])
         self.note = QtWidgets.QLabel(''); self.note.setStyleSheet('color:#52514e'); lay.addWidget(self.note)
     def set_nights(self, nights):
         self.gl.clear(); self.nights = nights
         self.explain.setHtml(("<p><b>What each chart means, what stands out, and what to do about it.</b></p>" + explain.overview(nights)) if nights else '')
         if not nights: return
+        self.gl.setMinimumHeight(5 * self.ROW_H)
         labs = [n.label for n in nights]; x = np.arange(len(nights)); S = [n.stats for n in nights]
         def g(k): return np.array([s.get(k, np.nan) for s in S], dtype=float)
         def plot(row, col, title, unit=''):
             p = self.gl.addPlot(row=row, col=col, axisItems={'bottom': BarAxis(labs, orientation='bottom')}); style_plot(p)
             from . import explain as _ex
             cap = _ex.overview_caption(title)
-            p.setTitle(f"<span style='font-size:10pt;color:#0b0b0b'>{title}</span>" + (f"<br><span style='font-size:8.5pt;color:#52514e'>{cap}</span>" if cap else ''))
+            p.setTitle(f"<span style='font-size:10pt;color:#0b0b0b'>{_wrap(title, 70)}</span>" + (f"<br><span style='font-size:8.5pt;color:#52514e'>{_wrap(cap)}</span>" if cap else ''))
             p.setLabel('left', unit); p.setMouseEnabled(x=False, y=False); p.hideButtons()
             ax = p.getAxis('bottom'); ax.setStyle(tickFont=QtGui.QFont('Segoe UI', 8), autoExpandTextSpace=True)
             # thin the labels so they never overlap: short form past 6 nights, every k-th past 14
@@ -184,7 +196,8 @@ class OverviewView(QtWidgets.QWidget):
         p.plot(x, g('press_95'), pen=pg.mkPen(C['blue'], width=2), symbol='o', symbolBrush=C['blue'], symbolPen=None, symbolSize=7)
         p.plot(x, g('press_med'), pen=pg.mkPen(C['aqua'], width=2), symbol='o', symbolBrush=C['aqua'], symbolPen=None, symbolSize=7)
         p.plot(x, hi, pen=pg.mkPen(C['red'], width=1, style=QtCore.Qt.DashLine), stepMode=None)
-        p.setYRange(3, max(13, np.nanmax(hi) + 1) if np.isfinite(np.nanmax(hi)) else 13)
+        lo_v = np.nanmin(lo) if np.isfinite(lo).any() else 4; hi_v = np.nanmax(hi) if np.isfinite(hi).any() else 12
+        p.setYRange(max(0, np.floor(lo_v) - 1), np.ceil(hi_v) + 1)
         # leak
         p = plot(2, 0, 'Leak: median (aqua), 95th percentile (orange); dashed = 24 L/min', 'L/min')
         bars(p, g('leak_med'), C['aqua'], 0.28, -0.3); bars(p, g('leak_95'), C['orange'], 0.28, 0.0); p.addLine(y=24, pen=pg.mkPen(C['red'], style=QtCore.Qt.DashLine))
@@ -196,10 +209,13 @@ class OverviewView(QtWidgets.QWidget):
         bars(p, g('rr_med'), C['blue'], 0.2, -0.25); bars(p, g('mv_med'), C['aqua'], 0.2, 0.0); bars(p, g('tv_med') / 50, C['green'], 0.2, 0.25)
         # spo2 if any
         if np.isfinite(g('spo2_mean')).any():
-            p = plot(3, 1, 'SpO2: mean (blue), min (red); ODI (orange line)', '%')
+            p = plot(3, 1, 'SpO2: mean (blue), min (red); ODI dips per hour (orange labels)', '%')
             p.plot(x, g('spo2_mean'), pen=pg.mkPen(C['blue'], width=2), symbol='o', symbolBrush=C['blue'], symbolPen=None)
             p.plot(x, g('spo2_min'), pen=pg.mkPen(C['red'], width=2), symbol='o', symbolBrush=C['red'], symbolPen=None)
-            p.plot(x, g('ODI'), pen=pg.mkPen(C['orange'], width=2), symbol='o', symbolBrush=C['orange'], symbolPen=None); p.setYRange(0, 100)
+            smn = g('spo2_min'); low = np.nanmin(smn) if np.isfinite(smn).any() else 85; top_y = 101
+            p.setYRange(max(50, np.floor(low) - 3), top_y + 2)
+            for i, v in enumerate(g('ODI')):                      # ODI is a count per hour, so it is labelled rather than drawn on the % axis
+                if np.isfinite(v): t = pg.TextItem(f'ODI {v:.1f}', color=C['orange'], anchor=(0.5, 0)); t.setPos(i, top_y + 1.5); p.addItem(t)
         else:
             p = plot(3, 1, 'Time at max pressure (% of night) and periodic breathing windows (magenta)', '%')
             bars(p, g('press_at_max_pct'), C['blue']); p.plot(x, g('periodic_windows'), pen=pg.mkPen(C['magenta'], width=2), symbol='o', symbolBrush=C['magenta'], symbolPen=None)
@@ -215,7 +231,8 @@ class OverviewView(QtWidgets.QWidget):
 class BreathView(QtWidgets.QWidget):
     def __init__(self):
         super().__init__(); lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(4, 4, 4, 4)
-        self.gl = pg.GraphicsLayoutWidget(); self.gl.setBackground('w'); lay.addWidget(self.gl)
+        self.gl = pg.GraphicsLayoutWidget(); self.gl.setBackground('w'); self.gl.ci.layout.setVerticalSpacing(18); self.gl.setMinimumHeight(5 * 300)
+        sc = QtWidgets.QScrollArea(); sc.setWidgetResizable(True); sc.setFrameShape(QtWidgets.QFrame.NoFrame); sc.setWidget(self.gl); lay.addWidget(sc, 1)
         self.note = QtWidgets.QLabel(''); self.note.setStyleSheet('color:#52514e'); lay.addWidget(self.note)
     def set_night(self, nt):
         self.gl.clear()
