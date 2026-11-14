@@ -99,7 +99,7 @@ function addDays(iso, d) { const x = new Date(iso); x.setDate(x.getDate() + d); 
 function renderSynopsis() {
   if (!nights.length) return; let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a];
   const diag = parseFloat($('diag').value) || null; store.set('diag', diag);
-  $('syntext').innerHTML = SS.synopsis(nights, a, b, diag) + appleSection(a, b);
+  $('syntext').innerHTML = EX.spellOut(SS.synopsis(nights, a, b, diag) + appleSection(a, b));
   if ($('landmode').value === 'night') $('landmode').value = 'range';
   if ($('p-land').classList.contains('active')) drawLandscape();
   claudeSynopsis(false);
@@ -136,7 +136,7 @@ function drawOverview() {
   // each chart gets its own explanation underneath: what it is, your result, what to do; the rest go in the fold
   const items = EX.overviewItems(nights); const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const SIMPLE = { 'Usage (hours)': 'Hours on the mask each night. Aim for 4 or more every night, 7 or more is better. Dashed line is 4 h.', 'AHI: machine vs app': 'Breathing events per hour. Under 5 means treated, under 1 is excellent. Blue is the machine, orange is SleepScope rechecking.', 'Leak': 'Air escaping from the mask on the worst 5% of the night. Under the dashed 24 line is fine; above it the seal is losing therapy.', 'Time at pressure, events per hour at each pressure': 'Top: hours at each pressure. Bottom: events per hour at that pressure; red is machine events, violet is flattened breathing that ends in a recovery breath.' };
-  const panel = (it) => it ? `<h4>${esc(it.title)}</h4><p><b>What it is.</b> ${esc(SIMPLE[it.title] || it.what)}</p>` + (it.found.length ? `<p><b>Your result.</b> ${esc(it.found.join(' '))}</p>` : '') + (it.imp.length ? `<p class="do"><b>What to do.</b> ${esc(it.imp.join(' '))}</p>` : '') : '';
+  const panel = (it) => it ? EX.spellOut(`<h4>${esc(it.title)}</h4><p><b>What it is.</b> ${esc(SIMPLE[it.title] || it.what)}</p>` + (it.found.length ? `<p><b>Your result.</b> ${esc(it.found.join(' '))}</p>` : '') + (it.imp.length ? `<p class="do"><b>What to do.</b> ${esc(it.imp.join(' '))}</p>` : '')) : '';
   const byT = Object.fromEntries(items.map(it => [it.title, it])); const used = ['Usage (hours)', 'AHI: machine vs app', 'Leak', 'Time at pressure, events per hour at each pressure'];
   $('ex-usage').innerHTML = panel(byT['Usage (hours)']); $('ex-ahi').innerHTML = panel(byT['AHI: machine vs app']); $('ex-leak').innerHTML = panel(byT['Leak']); $('ex-pressure').innerHTML = panel(byT[used[3]]);
   $('ovexplain').innerHTML = items.filter(it => !used.includes(it.title)).map(it => `<div class="ovex">${panel(it)}</div>`).join('');
@@ -296,7 +296,7 @@ function cams(N) { const c = { x: 0, y: 0, z: 0 }; return { over: { eye: { x: -0
 function landView(v) { landCam = v; drawLandscape(); }
 
 // ---------------------------------------------------------------- Claude
-const SYSTEM = `You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data. Give plain, direct, well-reasoned answers with no filler. Use the numbers in the CONTEXT block; do not invent data. Say when something is not in the data and what would answer it. Pressure settings are prescribed: discuss trade-offs and what to raise with the prescriber rather than instructing changes. Never use dashes in prose. Keep answers tight.`;
+const SYSTEM = `You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data. Give plain, direct, well-reasoned answers with no filler. Spell out every abbreviation the first time you use it, for example AHI (apnea hypopnea index). Use the numbers in the CONTEXT block; do not invent data. Say when something is not in the data and what would answer it. Pressure settings are prescribed: discuss trade-offs and what to raise with the prescriber rather than instructing changes. Never use dashes in prose. Keep answers tight.`;
 function buildContext(a, b) {
   const sel = nights.filter(n => n.date >= a && n.date <= b); const diag = parseFloat($('diag').value) || null;
   const syn = (SS.synopsis(nights, a, b, diag) + appleSection(a, b)).replace(/<\/(p|h3|h4|li|div)>/g, '\n').replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); const cols = ['date', 'hours', 'mode', 'AHI', 'OA', 'CA', 'H', 'arousals', 'app_AHI', 'app_unflagged', 'press_min', 'press_med', 'press_95', 'press_max', 'press_at_max_pct', 'leak_med', 'leak_95', 'leak_pct_large', 'flowlim_95', 'flowlim_minutes', 'rr_med', 'tv_med', 'mv_med', 'spo2_mean', 'spo2_min', 'spo2_pct_lt90', 'ODI', 'w_bd', 'w_asleep', 'w_cover', 'w_deeprem', 'w_hrv'];

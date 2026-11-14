@@ -166,7 +166,7 @@ class OverviewView(QtWidgets.QWidget):
         h += f"<p style='margin:0 0 6px'><b>What it is.</b> {esc(simple or item['what'])}</p>"
         if item['found']: h += f"<p style='margin:0 0 6px'><b>Your result.</b> {esc(' '.join(item['found']))}</p>"
         if item['imp']: h += f"<p style='margin:0;color:#0f6e4f'><b>What to do.</b> {esc(' '.join(item['imp']))}</p>"
-        return h + '</div>'
+        return explain.spell_out(h + '</div>')
 
     def _row(self, item, simple, cols=1):
         """A chart row: GraphicsLayoutWidget on the left, explanation on the right. Returns the chart widget."""

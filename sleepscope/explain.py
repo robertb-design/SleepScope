@@ -9,11 +9,38 @@ FL_THRESH = 0.20
 def _fin(v): return v is not None and isinstance(v, (int, float, np.floating)) and np.isfinite(v)
 
 
+# Abbreviations spelled out the first time each appears in a block of text (same table on the phone: EX.spellOut)
+ACRONYMS = {
+    'AHI': 'apnea hypopnea index', 'RDI': 'respiratory disturbance index', 'ODI': 'oxygen desaturation index',
+    'SpO2': 'blood oxygen saturation', 'RERA': 'respiratory effort related arousal', 'EPR': 'expiratory pressure relief',
+    'CPAP': 'continuous positive airway pressure', 'APAP': 'automatic positive airway pressure', 'HRV': 'heart rate variability',
+    'cmH2O': 'centimeters of water pressure', 'BD': 'Breathing Disturbances', 'REM': 'rapid eye movement sleep',
+}
+_ACR_RE = _re_acr = None
+
+
+def spell_out(text):
+    """First mention of each abbreviation becomes 'AHI (apnea hypopnea index)'. Leaves HTML tags and later mentions alone."""
+    import re as _r
+    global _ACR_RE
+    if not text: return text
+    if _ACR_RE is None:
+        _ACR_RE = _r.compile(r'(?<![A-Za-z0-9])(' + '|'.join(sorted(map(_r.escape, ACRONYMS), key=len, reverse=True)) + r')((?:-[A-Za-z]+)?)(?![A-Za-z0-9])')
+    seen = set(); parts = _r.split(r'(<[^>]+>)', text)
+    def rep(m):
+        a = m.group(1)
+        if a in seen: return m.group(0)
+        seen.add(a); rest = m.string[m.end():m.end() + 2]
+        if rest.startswith(' (') or rest.startswith('('): return m.group(0)
+        return f"{m.group(0)} ({ACRONYMS[a]})"
+    return ''.join(p if p.startswith('<') else _ACR_RE.sub(rep, p) for p in parts)
+
+
 def _block(title, what, found, improve):
     h = f"<h4 style='margin:10px 0 2px;color:#1d4f91'>{title}</h4><p style='margin:0 0 4px'><b>What it shows.</b> {what}</p>"
     if found: h += "<p style='margin:0 0 4px'><b>What stands out.</b> " + ' '.join(found) + "</p>"
     if improve: h += "<p style='margin:0 0 6px;color:#0f6e4f'><b>What to improve and how.</b> " + ' '.join(improve) + "</p>"
-    return h
+    return spell_out(h)
 
 
 def overview(nights, items=None) -> str:

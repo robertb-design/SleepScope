@@ -109,6 +109,8 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 
 ## House rules (from Robert)
 - Plain, clinical, tight language. No dashes in prose anywhere (use commas or restructure).
+- Spell out abbreviations on first use in every explanation block: `explain.spell_out` / `EX.spellOut` with the shared
+  `ACRONYMS` table turn the first AHI into "AHI (apnea hypopnea index)"; Ask Claude's system prompt asks the same.
 - Every chart and table gets a plain one line explanation and "what to do" guidance where it fits.
 - Separate verified facts from inference; say "probable" or "guessing" when that is what it is.
 - No personal health data, API keys or account details in the repository. The About me box and API key live

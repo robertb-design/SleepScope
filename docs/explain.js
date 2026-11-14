@@ -2,7 +2,14 @@
 'use strict';
 const EX = (() => {
   const fin = Number.isFinite; const mean = (a) => { const v = a.filter(fin); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : NaN; };
-  const block = (title, what, found, improve) => `<h4 style="margin:10px 0 2px;color:#1d4f91">${title}</h4><p style="margin:0 0 4px"><b>What it shows.</b> ${what}</p>` + (found.length ? `<p style="margin:0 0 4px"><b>What stands out.</b> ${found.join(' ')}</p>` : '') + (improve.length ? `<p style="margin:0 0 6px;color:#0f6e4f"><b>What to improve and how.</b> ${improve.join(' ')}</p>` : '');
+  // abbreviations spelled out the first time each appears in a block (same table as explain.ACRONYMS on the desktop)
+  const ACRONYMS = { AHI: 'apnea hypopnea index', RDI: 'respiratory disturbance index', ODI: 'oxygen desaturation index', SpO2: 'blood oxygen saturation', RERA: 'respiratory effort related arousal', EPR: 'expiratory pressure relief', CPAP: 'continuous positive airway pressure', APAP: 'automatic positive airway pressure', HRV: 'heart rate variability', cmH2O: 'centimeters of water pressure', BD: 'Breathing Disturbances', REM: 'rapid eye movement sleep' };
+  const ACR_RE = new RegExp('(?<![A-Za-z0-9])(' + Object.keys(ACRONYMS).sort((a, b) => b.length - a.length).join('|') + ')((?:-[A-Za-z]+)?)(?![A-Za-z0-9])', 'g');
+  function spellOut(text) {
+    if (!text) return text; const seen = new Set();
+    return String(text).split(/(<[^>]+>)/).map(p => p.startsWith('<') ? p : p.replace(ACR_RE, (m, a, suf, off, str) => { if (seen.has(a)) return m; seen.add(a); const nx = str.slice(off + m.length, off + m.length + 2); if (nx.startsWith(' (') || nx.startsWith('(')) return m; return `${m} (${ACRONYMS[a]})`; })).join('');
+  }
+  const block = (title, what, found, improve) => spellOut(`<h4 style="margin:10px 0 2px;color:#1d4f91">${title}</h4><p style="margin:0 0 4px"><b>What it shows.</b> ${what}</p>` + (found.length ? `<p style="margin:0 0 4px"><b>What stands out.</b> ${found.join(' ')}</p>` : '') + (improve.length ? `<p style="margin:0 0 6px;color:#0f6e4f"><b>What to improve and how.</b> ${improve.join(' ')}</p>` : ''));
   function overviewItems(nights) { const items = []; overview(nights, items); return items; }
   function overview(nights, items) {
     const B = (t, w, f, im) => { if (items) items.push({ title: t, what: w, found: [...f], imp: [...im] }); return block(t, w, f, im); };
@@ -119,5 +126,5 @@ const EX = (() => {
     const detail = `Openness ${op.toFixed(2)} (1 is free, 0 is stopped)${lk ? `, leak ${lk.toFixed(0)} L/min` : ''}${pr != null ? `, pressure ${pr.toFixed(1)} cmH2O` : ''}`;
     return `<b>${level}</b>, ${n} at ${t}<br>${meaning}<br><i>${detail}.</i><br><b>What to do:</b> ${doit}`;
   }
-  return { overview, overviewItems, night, point };
+  return { overview, overviewItems, night, point, spellOut };
 })();

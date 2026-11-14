@@ -216,4 +216,5 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
     if len(runs) > 1: items.append('Hold one setting for at least a week before judging it; single nights swing too much to compare settings on.')
     H_.append('<ul>' + ''.join(f'<li>{i}</li>' for i in items) + '</ul>')
     p('<i>This synopsis is computed from the card data by fixed rules (listed in the Methods tab). It is a reading of the numbers, not medical advice, and it cannot see what a sleep study sees: EEG sleep stages, effort belts, or a technician\'s judgement. Use it to ask better questions.</i>')
-    return '\n'.join(H_)
+    from .explain import spell_out
+    return spell_out('\n'.join(H_))
