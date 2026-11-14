@@ -396,6 +396,82 @@ def night_stats(nt: Night) -> dict:
     return d
 
 
+PRESSURE_BIN = 0.5       # cmH2O; lower edge inclusive, so a ceiling of 10.0 gets its own 10.0 to 10.4 band
+PP_KINDS = (('OA', 'Obstructive Apnea'), ('CA', 'Central Apnea'), ('H', 'Hypopnea'), ('UA', 'Unclassified Apnea'))
+
+
+def pressure_profile(nights, width=PRESSURE_BIN):
+    """Time at each pressure band from the 2 s Press trace, and the events that began in each band.
+
+    Returns a list of dicts sorted by band: lo, hi, minutes, OA, CA, H, UA (machine scored), RERA (app flow limitation
+    runs ending in a recovery breath), events (OA+CA+H+UA) and rate (events per hour at that pressure), rera_rate.
+    Samples under 3 cmH2O (mask off, start up) are ignored. Pressure at an event is the trace at its onset.
+    """
+    bins = {}; top = dict(minutes=0.0, events=0, RERA=0); rest = dict(minutes=0.0, events=0, RERA=0)
+    def band(p): return int(np.floor(p / width + 1e-9))
+    def get(k): return bins.setdefault(k, dict(lo=k * width, hi=k * width + width - 0.01, minutes=0.0, OA=0, CA=0, H=0, UA=0, RERA=0))
+    for nt in nights:
+        cmax = getattr(nt, 'str_max', None) or (nt.stats.get('press_max', np.nan) if isinstance(getattr(nt, 'stats', None), dict) else np.nan)
+        def side(p): return top if (np.isfinite(cmax) and p >= cmax - 0.1) else rest
+        for ss in nt.sessions:
+            pr = ss.ch.get('Press') if hasattr(ss, 'ch') else None
+            if pr is None or not len(pr): continue
+            pr = np.asarray(pr, dtype=float); ok = np.isfinite(pr) & (pr >= 3)
+            if ok.any():
+                ks, cnt = np.unique(np.floor(pr[ok] / width + 1e-9).astype(int), return_counts=True)
+                for k, c in zip(ks, cnt): get(int(k))['minutes'] += c * 2 / 60
+                if np.isfinite(cmax):
+                    at = int((pr[ok] >= cmax - 0.1).sum()); top['minutes'] += at * 2 / 60; rest['minutes'] += (int(ok.sum()) - at) * 2 / 60
+            def p_at(t):
+                i = int((t - ss.start).total_seconds() / 2)
+                if i < 0 or i >= len(pr) or not np.isfinite(pr[i]) or pr[i] < 3: return None
+                return pr[i]
+            for e in ss.machine_events:
+                key = next((k for k, lab in PP_KINDS if e.label == lab), None)
+                if not key: continue
+                p = p_at(e.start)
+                if p is not None: get(band(p))[key] += 1; side(p)['events'] += 1
+            for e in ss.app_events:
+                if e.label == 'Flow Limitation Run' and 'RERA' in e.detail:
+                    p = p_at(e.start)
+                    if p is not None: get(band(p))['RERA'] += 1; side(p)['RERA'] += 1
+    out = []
+    for k in sorted(bins):
+        b = bins[k]; b['events'] = b['OA'] + b['CA'] + b['H'] + b['UA']; h = b['minutes'] / 60
+        b['rate'] = b['events'] / h if h > 0 else np.nan; b['rera_rate'] = b['RERA'] / h if h > 0 else np.nan
+        out.append(b)
+    for d in (top, rest):
+        h = d['minutes'] / 60; d['rate'] = d['events'] / h if h > 0 else np.nan; d['rera_rate'] = d['RERA'] / h if h > 0 else np.nan
+    tot = top['minutes'] + rest['minutes']; top['pct'] = 100 * top['minutes'] / tot if tot else np.nan
+    pressure_profile.last_split = (top, rest)                       # read by pressure_profile_text and the charts
+    return out
+
+
+def ceiling_split(nights):
+    """(at_top, below): minutes, events, RERA, rate, rera_rate; at_top uses each night's own highest pressure (within 0.1)."""
+    pressure_profile(nights); return pressure_profile.last_split
+
+
+def pressure_profile_text(prof):
+    """Tab separated table for Claude, plus the share of time and events at the top band."""
+    if not prof: return ''
+    tot = sum(b['minutes'] for b in prof) or 1
+    rows = ['band cmH2O\tminutes\t% of time\tOA\tCA\tH\tUA\tevents/h at this pressure\tRERA-like FL runs\tRERA-like/h']
+    for b in prof:
+        if b['minutes'] < 1 and not b['events'] and not b['RERA']: continue
+        rows.append(f"{b['lo']:.1f} to {b['hi']:.2f}\t{b['minutes']:.0f}\t{100 * b['minutes'] / tot:.1f}\t{b['OA']}\t{b['CA']}\t{b['H']}\t{b['UA']}\t"
+                    + (f"{b['rate']:.2f}" if np.isfinite(b['rate']) else '') + f"\t{b['RERA']}\t" + (f"{b['rera_rate']:.2f}" if np.isfinite(b['rera_rate']) else ''))
+    top, rest = getattr(pressure_profile, 'last_split', (None, None))
+    if top and top['minutes']:
+        f = lambda v: f'{v:.2f}' if np.isfinite(v) else 'n/a'
+        rows.append(f"At each night's own top pressure (within 0.1 cmH2O): {top['minutes']:.0f} min, {top['pct']:.0f}% of time, "
+                    f"machine events {top['events']} ({f(top['rate'])}/h), RERA-like runs {top['RERA']} ({f(top['rera_rate'])}/h). "
+                    f"Below the top: machine events {rest['events']} ({f(rest['rate'])}/h), RERA-like runs {rest['RERA']} ({f(rest['rera_rate'])}/h).")
+    rows.append('Read with care: AutoSet raises pressure after events, so events at onset sit lower than the pressure that follows; '
+                'events or flow limitation at the top mean the machine had no room left to respond.')
+    return '\n'.join(rows)
+
+
 STAT_COLUMNS = [
     ('label', 'Night', ''), ('hours', 'Hours', '{:.2f}'), ('sessions', 'Sess', '{}'), ('mode', 'Mode', ''), ('setting', 'Pressure setting', ''),
     ('AHI', 'AHI machine', '{:.2f}'), ('OA', 'OA', '{}'), ('CA', 'CA', '{}'), ('H', 'H', '{}'), ('arousals', 'Arousal', '{}'),
@@ -568,6 +644,7 @@ def apply_str_settings(nights, str_data):
         i = days.index(nt.date)
         def v(l): return round(float(sig[l][i]), 1) if l and i < len(sig[l]) and np.isfinite(sig[l][i]) and sig[l][i] > 0 else None
         lo, hi, c = v(lmin), v(lmax), v(lc)
+        nt.str_max = hi if hi and lo and hi > lo else None               # numeric ceiling for the time at pressure split
         if lo and hi and hi > lo and nt.stats.get('mode') != 'CPAP': nt.str_setting = f'AutoSet {lo:g} to {hi:g}'
         elif c and nt.stats.get('mode') == 'CPAP': nt.str_setting = f'CPAP {c:g}'
         if nt.str_setting and nt.stats: nt.stats['setting'] = nt.str_setting

@@ -25,6 +25,9 @@ with the prescriber rather than instructing changes. Never use dashes in prose; 
 """
 
 
+EVENT_BUDGET = 700
+
+
 def build_context(nights, start, end, diag_ahi=None):
     sel = [n for n in nights if start <= n.date <= end]
     if not sel: return 'No nights in range.'
@@ -34,16 +37,24 @@ def build_context(nights, start, end, diag_ahi=None):
     table = ['\t'.join(h for _, h in cols)]
     for n in sel:
         table.append('\t'.join(scoring.fmt(k, n.stats.get(k)) for k, _ in cols))
-    evs = []
+    # events: every machine event is kept; app events fill the rest of the budget newest night first, so the latest nights are never cut
+    per_night = []
     for n in sel:
+        m_ev, a_ev = [], []
         for s in n.sessions:
             for e in sorted(s.machine_events + s.app_events, key=lambda e: e.start):
                 if e.label in ('Flow Limitation Run',) and 'RERA' not in e.detail: continue
                 i2 = max(0, int((e.start - s.start).total_seconds() / 2)); pr = s.ch.get('Press'); lk = s.ch.get('Leak')
                 ptxt = f"P={pr[min(i2, len(pr) - 1)]:.1f}" if pr is not None and len(pr) else 'P=?'
                 ltxt = f"leak={lk[min(i2, len(lk) - 1)] * 60:.0f}" if lk is not None and len(lk) else 'leak=?'
-                evs.append(f"{n.label} {e.start:%H:%M:%S} {e.label} [{e.source}] {e.duration:.0f}s {ptxt} {ltxt} {e.detail}")
-    if len(evs) > 400: evs = evs[:400] + [f'... {len(evs) - 400} more events omitted']
+                (m_ev if e.source == 'machine' else a_ev).append((e.start, f"{n.label} {e.start:%H:%M:%S} {e.label} [{e.source}] {e.duration:.0f}s {ptxt} {ltxt} {e.detail}"))
+        per_night.append((m_ev, a_ev))
+    budget = max(0, EVENT_BUDGET - sum(len(m) for m, _ in per_night)); dropped = 0; keep = []
+    for m_ev, a_ev in reversed(per_night):
+        take = a_ev[:budget]; budget -= len(take); dropped += len(a_ev) - len(take); keep.append(sorted(m_ev + take))
+    evs = [t for night in reversed(keep) for _, t in night]
+    if dropped: evs.append(f'... {dropped} app-scored events from the oldest nights omitted to save space (all machine events and the newest nights are complete)')
+    prof = scoring.pressure_profile(sel); ptxt_tab = scoring.pressure_profile_text(prof)
     ox = []
     for n in sel:
         rep = scoring.oximetry_report(n)
@@ -52,7 +63,9 @@ def build_context(nights, start, end, diag_ahi=None):
     total, hit = scoring.validation_summary(sel)
     return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n=== App synopsis (rule based) ===\n{syn}\n\n"
             f"=== Per night statistics (tab separated; P = set pressure cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed scoring) ===\n"
-            + '\n'.join(table) + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs) + oxtxt
+            + '\n'.join(table)
+            + ("\n\n=== Time at pressure (from the 2 s pressure trace; events counted at onset; rate = events per hour spent at that pressure) ===\n" + ptxt_tab if ptxt_tab else '')
+            + "\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n" + '\n'.join(evs) + oxtxt
             + "\n\n=== Method notes ===\nResMed stamps event end; app subtracts duration. App hypopnea = 30% flow drop >= 10 s without desaturation check (over-counts). "
               f"On this card the app's detector reproduced {hit} of {total} machine-scored apneas. Obstructive vs central comes only from the machine. No SpO2 unless an oximeter timeline section is present above; when it is, use it to say which events cost oxygen and which dips look like sensor artifact.")
 

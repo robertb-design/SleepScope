@@ -75,6 +75,9 @@ const SS = (() => {
     }
     return r;
   }
+  // RERA-like: a flow limitation run followed within 10 s by ventilation at RERA_THR times the 2 min baseline (desktop uses a per breath
+  // peak flow test; at 1.6 the two agreed on 416 of 448 runs on a real 12 night card, 69 vs 71 flagged)
+  let RERA_THR = 1.6;
   function runs(mask) { const out = []; let i = 0; const n = mask.length; while (i < n) { if (mask[i]) { let j = i; while (j < n && mask[j]) j++; out.push([i, j]); i = j; } else i++; } return out; }
   function scoreSession(s) {
     s.app = []; if (!s.flow) return;
@@ -89,7 +92,8 @@ const SS = (() => {
         s.app.push({ label: m ? m.label : 'Apnea (unflagged by machine)', start: st, dur: b - a, source: 'app', detail: `flow fell to ${Math.round(lowest * 100)}% of baseline` + (m ? `; machine scored ${m.dur} s` : '') });
       } else s.app.push({ label: 'Hypopnea', start: st, dur: b - a, source: 'app', detail: `flow ${Math.round(mean * 100)}% of baseline (flow only, unconfirmed)` });
     }
-    const fl = s.ch.FlowLim; if (fl) { const m2 = new Uint8Array(fl.length); for (let i = 0; i < fl.length; i++) m2[i] = fl[i] >= 0.2 ? 1 : 0; for (const [a, b] of runs(m2)) { if (2 * (b - a) >= 10) { let mx = 0, mn = 0; for (let k = a; k < b; k++) { mn += fl[k]; if (fl[k] > mx) mx = fl[k]; } s.app.push({ label: 'Flow Limitation Run', start: new Date(s.start.getTime() + 2000 * a), dur: 2 * (b - a), source: 'app', detail: `FlowLim mean ${(mn / (b - a)).toFixed(2)}, peak ${mx.toFixed(2)}` }); } } }
+    const fl = s.ch.FlowLim; if (fl) { const m2 = new Uint8Array(fl.length); for (let i = 0; i < fl.length; i++) m2[i] = fl[i] >= 0.2 ? 1 : 0; for (const [a, b] of runs(m2)) { if (2 * (b - a) >= 10) { let mx = 0, mn = 0; for (let k = a; k < b; k++) { mn += fl[k]; if (fl[k] > mx) mx = fl[k]; } let rec = false; const te = 2 * b; if (r && r.length) { for (let k = Math.max(0, te - 2); k <= Math.min(r.length - 1, te + 10); k++) if (r[k] >= RERA_THR) { rec = true; break; } }
+        s.app.push({ label: 'Flow Limitation Run', start: new Date(s.start.getTime() + 2000 * a), dur: 2 * (b - a), source: 'app', detail: `FlowLim mean ${(mn / (b - a)).toFixed(2)}, peak ${mx.toFixed(2)}` + (rec ? ', recovery breath (RERA-like)' : '') }); } } }
     const lk = s.ch.Leak; if (lk) { const m3 = new Uint8Array(lk.length); for (let i = 0; i < lk.length; i++) m3[i] = lk[i] * 60 > 24 ? 1 : 0; for (const [a, b] of runs(m3)) { if (2 * (b - a) >= 60) { let mx = 0, mn = 0; for (let k = a; k < b; k++) { mn += lk[k] * 60; if (lk[k] * 60 > mx) mx = lk[k] * 60; } s.app.push({ label: 'Large Leak', start: new Date(s.start.getTime() + 2000 * a), dur: 2 * (b - a), source: 'app', detail: `mean ${Math.round(mn / (b - a))} L/min, peak ${Math.round(mx)}` }); } } }
     s.app.sort((a, b) => a.start - b.start);
   }
@@ -141,6 +145,7 @@ const SS = (() => {
     if (!STR || !STR.signals) return null; const i = STR.days.indexOf(nt.date); if (i < 0) return null; const labs = Object.keys(STR.signals);
     const find = (...ps) => labs.find(l => ps.some(p => p.test(l))); const v = (l) => { const x = l ? STR.signals[l][i] : NaN; return Number.isFinite(x) && x > 0 ? x : null; };
     const lo = v(find(/AS\.MinPress/, /MinPress/)), hi = v(find(/AS\.MaxPress/, /MaxPress/)), c = v(find(/S\.C\.Press/, /C\.Press/));
+    nt.str_max = lo && hi && hi > lo ? Math.round(hi * 10) / 10 : null;
     if (lo && hi && hi > lo && mode !== 'CPAP') return `AutoSet ${+lo.toFixed(1)} to ${+hi.toFixed(1)}`; if (c && mode === 'CPAP') return `CPAP ${+c.toFixed(1)}`; return null;
   }
 
@@ -182,7 +187,7 @@ const SS = (() => {
     const st = {
       date: nt.date, hours: hrs, sessions: ss.length, mode, starts: ss.map(s => fmtTime(s.start)).join(', '), ends: ss.map(s => fmtTime(new Date(s.start.getTime() + s.duration * 1000))).join(', '),
       OA, CA, H, UA, arousals: AR, AHI: hrs ? (OA + CA + H + UA) / hrs : 0, CAI: hrs ? CA / hrs : 0,
-      app_apneas: appAp, app_unflagged: cnt(aev, 'Apnea (unflagged by machine)'), app_hypopneas: appH, app_AHI: hrs ? (appAp + appH) / hrs : 0, app_flowlim_runs: appFL,
+      app_apneas: appAp, app_unflagged: cnt(aev, 'Apnea (unflagged by machine)'), app_hypopneas: appH, app_AHI: hrs ? (appAp + appH) / hrs : 0, app_flowlim_runs: appFL, app_RERA_like: aev.filter(e => e.label === 'Flow Limitation Run' && /RERA/.test(e.detail)).length,
       app_hyp_checked: hypChecked.length, app_hyp_confirmed: hypConf.length, app_hyp_conf_txt: hypChecked.length ? `${hypConf.length} of ${hypChecked.length}` : '', app_leak_excluded: leakExcluded, ODI_motion: odiMotion,
       press_min: pmin, press_floor: pressureFloor(ss), str_setting: strSetting(nt, mode), press_max: pmax, press_med: pct(pr, 0.5), press_95: pct(pr, 0.95), press_at_max_pct: atMax * 100, epr: (epr.length && epr.length === pr.length) ? pct(pr.map((v, i) => v - epr[i]), 0.5) : NaN,
       leak_med: pct(leak, 0.5), leak_95: pct(leak, 0.95), leak_max: leak.length ? Math.max(...leak) : NaN, leak_pct_large: leak.length ? 100 * leak.filter(v => v > 24).length / leak.length : NaN, leak_episodes: leaks.length, leak_minutes: leaks.reduce((a, e) => a + e.dur, 0) / 60,
@@ -238,7 +243,7 @@ const SS = (() => {
       H_.push('<ul>' + rns.map(r => `<li>${label(r.nights[0].date)}${r.nights.length > 1 ? ' to ' + label(r.nights[r.nights.length - 1].date) : ''}: ${r.mode === 'AutoSet' ? 'AutoSet ' + r.lo + ' to ' + r.hi : 'CPAP fixed ' + r.hi}, AHI ${wmean(r.nights, 'AHI').toFixed(1)}, flow limitation 95th ${amean(r.nights, 'flowlim_95').toFixed(2)}, leak 95th ${amean(r.nights, 'leak_95').toFixed(0)} L/min, ${r.nights.reduce((a, n) => a + n.hours, 0).toFixed(1)} h</li>`).join('') + '</ul>');
       p('If AHI and flow limitation held steady while the ceiling came down, the lower setting is doing the job. If flow limitation rose, the airway is being held open less firmly even though the event count did not move. Single nights swing a lot, so give each setting several nights before judging it.');
     } else { const r = rns[0]; p(`Settings were constant: ${r.mode === 'AutoSet' ? 'AutoSet ' + r.lo + ' to ' + r.hi : 'fixed CPAP at ' + r.hi} cmH2O.`); }
-    const auto = sel.filter(n => n.stats.mode === 'AutoSet'); if (auto.length) { const am = wmean(auto, 'press_at_max_pct'); p(`On AutoSet nights the machine spent ${am.toFixed(0)}% of the time at its ceiling, with a median pressure of ${amean(auto, 'press_med').toFixed(1)} and a 95th percentile of ${amean(auto, 'press_95').toFixed(1)} cmH2O.` + (am > 20 ? ' Above about 20% at the ceiling means the machine wanted more than it was allowed; whether that matters depends on whether events or flow limitation got through.' : ' It had room to work; the ceiling was not a constraint.')); p(`A fixed pressure near the 95th percentile (${amean(auto, 'press_95').toFixed(0)} cmH2O) is the usual starting point if you move to CPAP mode. That is a question for the prescriber, not a change to make on your own.`); }
+    const auto = sel.filter(n => n.stats.mode === 'AutoSet'); if (auto.length) { const am = wmean(auto, 'press_at_max_pct'); p(`On AutoSet nights the machine spent ${am.toFixed(0)}% of the time at its ceiling, with a median pressure of ${amean(auto, 'press_med').toFixed(1)} and a 95th percentile of ${amean(auto, 'press_95').toFixed(1)} cmH2O.` + (am > 20 ? ' Above about 20% at the ceiling means the machine wanted more than it was allowed; whether that matters depends on whether events or flow limitation got through.' : ' It had room to work; the ceiling was not a constraint.')); { const [fp, ip] = pressureReading(auto); if (fp.length) p([...fp, ip[0]].join(' ')); } p(`A fixed pressure near the 95th percentile (${amean(auto, 'press_95').toFixed(0)} cmH2O) is the usual starting point if you move to CPAP mode. That is a question for the prescriber, not a change to make on your own.`); }
     h2('Flow limitation');
     if (!fin(fl95)) p('No flow limitation channel in these nights.'); else if (fl95 < 0.15) p(`Flow limitation (the airway narrowing short of a scored event) is low: 95th percentile ${fl95.toFixed(2)}, ${flMin.toFixed(0)} minutes a night above 0.2. The airway is being held open cleanly.`);
     else if (fl95 < 0.35) p(`Flow limitation is moderate: 95th percentile ${fl95.toFixed(2)}, about ${flMin.toFixed(0)} minutes a night above 0.2. This does not count toward AHI but it fragments sleep. If you wake unrefreshed with a low AHI, this is usually why, and it is the number that responds to a slightly higher minimum pressure or EPR change.`);
@@ -320,6 +325,47 @@ const SS = (() => {
   }
   function validation(nights) { let total = 0, hit = 0; for (const nt of nights) for (const s of nt.sessions) for (const m of s.machine) { if (!/Apnea/.test(m.label)) continue; total++; if (s.app.some(e => /Apnea/.test(e.label) && e.start >= new Date(m.start.getTime() - 15000) && m.start <= new Date(e.start.getTime() + e.dur * 1000 + 5000))) hit++; } return [total, hit]; }
   /** Oximeter timeline: 3% dips tied to events and leak, response of machine events, pulse surges. Lines of text; [] without oximetry. */
+  /** Time at each 0.5 cmH2O band from the 2 s Press trace and the events that began there (port of scoring.pressure_profile). */
+  const PP_KINDS = [['OA', 'Obstructive Apnea'], ['CA', 'Central Apnea'], ['H', 'Hypopnea'], ['UA', 'Unclassified Apnea']];
+  function pressureProfile(nights, width = 0.5) {
+    const bins = {}; const top = { minutes: 0, events: 0, RERA: 0 }, rest = { minutes: 0, events: 0, RERA: 0 };
+    const band = (p) => Math.floor(p / width + 1e-9); const get = (k) => (bins[k] ||= { lo: k * width, hi: k * width + width - 0.01, minutes: 0, OA: 0, CA: 0, H: 0, UA: 0, RERA: 0 });
+    for (const nt of nights) {
+      const cmax = nt.str_max || (nt.stats && Number.isFinite(nt.stats.press_max) ? nt.stats.press_max : NaN); const side = (p) => (Number.isFinite(cmax) && p >= cmax - 0.1 ? top : rest);
+      for (const ss of nt.sessions) {
+        const pr = ss.ch && ss.ch.Press; if (!pr || !pr.length) continue;
+        for (let i = 0; i < pr.length; i++) { const p = pr[i]; if (!(p >= 3)) continue; get(band(p)).minutes += 2 / 60; if (Number.isFinite(cmax)) side(p).minutes += 2 / 60; }
+        const pAt = (t) => { const i = Math.floor((t - ss.start) / 2000); return i >= 0 && i < pr.length && pr[i] >= 3 ? pr[i] : null; };
+        for (const e of ss.machine) { const k = PP_KINDS.find(([, l]) => l === e.label); if (!k) continue; const p = pAt(e.start); if (p !== null) { get(band(p))[k[0]]++; side(p).events++; } }
+        for (const e of ss.app) if (e.label === 'Flow Limitation Run' && /RERA/.test(e.detail)) { const p = pAt(e.start); if (p !== null) { get(band(p)).RERA++; side(p).RERA++; } }
+      }
+    }
+    const out = Object.keys(bins).map(Number).sort((a, b) => a - b).map(k => { const b = bins[k]; b.events = b.OA + b.CA + b.H + b.UA; const h = b.minutes / 60; b.rate = h > 0 ? b.events / h : NaN; b.rera_rate = h > 0 ? b.RERA / h : NaN; return b; });
+    for (const d of [top, rest]) { const h = d.minutes / 60; d.rate = h > 0 ? d.events / h : NaN; d.rera_rate = h > 0 ? d.RERA / h : NaN; }
+    const tot = top.minutes + rest.minutes; top.pct = tot ? 100 * top.minutes / tot : NaN;
+    return { bands: out, top, rest };
+  }
+  function pressureProfileText(pp) {
+    if (!pp.bands.length) return ''; const tot = pp.bands.reduce((a, b) => a + b.minutes, 0) || 1; const f = (v) => Number.isFinite(v) ? v.toFixed(2) : '';
+    const rows = ['band cmH2O\tminutes\t% of time\tOA\tCA\tH\tUA\tevents/h at this pressure\tRERA-like FL runs\tRERA-like/h'];
+    for (const b of pp.bands) { if (b.minutes < 1 && !b.events && !b.RERA) continue; rows.push(`${b.lo.toFixed(1)} to ${b.hi.toFixed(2)}\t${b.minutes.toFixed(0)}\t${(100 * b.minutes / tot).toFixed(1)}\t${b.OA}\t${b.CA}\t${b.H}\t${b.UA}\t${f(b.rate)}\t${b.RERA}\t${f(b.rera_rate)}`); }
+    const t = pp.top, r = pp.rest, g = (v) => Number.isFinite(v) ? v.toFixed(2) : 'n/a';
+    if (t.minutes) rows.push(`At each night's own top pressure (within 0.1 cmH2O): ${t.minutes.toFixed(0)} min, ${t.pct.toFixed(0)}% of time, machine events ${t.events} (${g(t.rate)}/h), RERA-like runs ${t.RERA} (${g(t.rera_rate)}/h). Below the top: machine events ${r.events} (${g(r.rate)}/h), RERA-like runs ${r.RERA} (${g(r.rera_rate)}/h).`);
+    rows.push('Read with care: AutoSet raises pressure after events, so events at onset sit lower than the pressure that follows; events or flow limitation at the top mean the machine had no room left to respond.');
+    return rows.join('\n');
+  }
+  /** [found, improve] sentences, same wording as explain.pressure_reading on the desktop. */
+  function pressureReading(nights) {
+    const sel = nights.filter(n => n.sessions && n.sessions.length && !n.sessions[0].summary); const pp = pressureProfile(sel); const t = pp.top, r = pp.rest;
+    if (!pp.bands.length || !t.minutes) return [[], []]; const f2 = (v) => Number.isFinite(v) ? v.toFixed(1) : 'n/a';
+    const found = [`${t.pct.toFixed(0)}% of the time at the top setting. Machine events ran at ${f2(t.rate)} per hour there against ${f2(r.rate)} below it; flow limitation runs ending in a recovery breath ran at ${f2(t.rera_rate)} per hour there against ${f2(r.rera_rate)} below.`];
+    const allr = t.RERA + r.RERA; let imp;
+    if (allr >= 5 && t.RERA / allr >= 0.6 && t.rera_rate >= 3 * Math.max(r.rera_rate, 0.01)) imp = [`${t.RERA} of ${allr} recovery-breath runs began at the top setting. The machine raises pressure when breathing flattens, so flattening at the top means it wanted more room and had none. That pattern supports trying a higher ceiling; take these numbers to whoever prescribes your settings and watch leak, centrals and flow limitation if it changes.`];
+    else if (t.pct >= 33) imp = ['Over a third of the time at the top, but events and flow limitation do not gather there, so the ceiling is not holding you back yet. Keep watching.'];
+    else imp = ['The ceiling is not where problems happen. Pressure has room; no change is pointed to.'];
+    imp.push('Events are counted at the pressure where they began. AutoSet raises pressure after events, so lower bands collect events partly for that reason; it does not mean low pressure caused them.');
+    return [found, imp];
+  }
   function oximetryReport(nt) {
     const out = []; const hms = (d) => `${fmtTime(d)}:${String(d.getSeconds()).padStart(2, '0')}`;
     for (const s of nt.sessions) {
@@ -350,6 +396,6 @@ const SS = (() => {
     }
     return out;
   }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw, pressureProfile, pressureProfileText, pressureReading, setReraThr: (v) => { RERA_THR = v; } };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

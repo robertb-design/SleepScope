@@ -113,6 +113,8 @@ def overview(nights) -> str:
         elif per.sum() == 0: found.append("No periodic (Cheyne-Stokes) breathing pattern found.")
         imp.append("Add an oximeter to replace this panel with oxygen data; AHI counts events but cannot say what they did to your oxygen." + (" If periodic windows cluster on one night, open it and look for a slow wax-and-wane in the ventilation trace; that pattern belongs in front of a physician." if pw else ''))
         out.append(_block('Time at maximum pressure, periodic breathing', "Blue bars: the share of each night the machine spent pinned at its ceiling (fixed-pressure nights show 100% by definition). Magenta: five-minute windows where breathing waxed and waned on a 30 to 90 second cycle, the Cheyne-Stokes pattern.", found, imp))
+    fp, ip = pressure_reading(nights)
+    if fp: out.append(_block('Time at pressure, events per hour at each pressure', "Left: hours spent at each half cmH2O of pressure across the nights shown, from the machine's pressure trace. Right: events per hour of time spent at that pressure (red, machine scored) and flow limitation runs ending in a recovery breath (violet).", fp, ip))
     return "<div style='font-size:12.5px;line-height:1.4'>" + ''.join(out) + "</div>"
 
 
@@ -262,6 +264,8 @@ OVERVIEW_CAPTIONS = {
     'Breathing': 'Breaths per minute and air moved. Steady from night to night is what you want.',
     'SpO2': 'Blood oxygen from the ring. Mean should stay 94 or higher; ODI (dips per hour) under 5.',
     'Time at max': 'Share of the night at top pressure. Over a third suggests the ceiling is a step low.',
+    'Time at pressure': 'Hours at each pressure. A tall bar at the top setting: the machine often ran out of room.',
+    'Events per hour at each pressure': 'Red: machine events. Violet: flattened runs with a recovery breath. Violet at the top: it wanted more.',
 }
 NIGHT_CAPTIONS = {
     'flow': 'Each wiggle is one breath. Flat stretches are pauses; shaded bands mark events.',
@@ -305,6 +309,29 @@ COLUMN_HELP = {
     'w_deeprem': 'Deep plus REM minutes from the Watch. Approximate (wrist motion and heart rate, not brain waves); watch the trend.',
     'w_hrv': 'Heart rate variability overnight from the Watch. Higher than your own usual is better recovery.', 'w_rr': 'Breathing rate the Watch measured while asleep.',
 }
+
+
+def pressure_reading(nights):
+    """(found, improve) sentences for the time at pressure charts; same wording in the Synopsis and on the phone."""
+    from . import scoring
+    sel = [n for n in nights if n.sessions]
+    prof = scoring.pressure_profile(sel)
+    if not prof: return [], []
+    top, rest = scoring.pressure_profile.last_split
+    if not top['minutes']: return [], []
+    f2 = lambda v: f'{v:.1f}' if np.isfinite(v) else 'n/a'
+    found = [f"{top['pct']:.0f}% of the time at the top setting. Machine events ran at {f2(top['rate'])} per hour there against {f2(rest['rate'])} below it; "
+             f"flow limitation runs ending in a recovery breath ran at {f2(top['rera_rate'])} per hour there against {f2(rest['rera_rate'])} below."]
+    allr = top['RERA'] + rest['RERA']
+    if allr >= 5 and top['RERA'] / allr >= 0.6 and top['rera_rate'] >= 3 * max(rest['rera_rate'], 0.01):
+        imp = [f"{top['RERA']} of {allr} recovery-breath runs began at the top setting. The machine raises pressure when breathing flattens, so flattening at the top means it wanted more room and had none. "
+               "That pattern supports trying a higher ceiling; take these numbers to whoever prescribes your settings and watch leak, centrals and flow limitation if it changes."]
+    elif top['pct'] >= 33:
+        imp = ['Over a third of the time at the top, but events and flow limitation do not gather there, so the ceiling is not holding you back yet. Keep watching.']
+    else:
+        imp = ['The ceiling is not where problems happen. Pressure has room; no change is pointed to.']
+    imp.append('Events are counted at the pressure where they began. AutoSet raises pressure after events, so lower bands collect events partly for that reason; it does not mean low pressure caused them.')
+    return found, imp
 
 
 def overview_caption(title):

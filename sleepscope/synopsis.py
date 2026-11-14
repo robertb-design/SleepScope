@@ -125,6 +125,9 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
         am = _wmean(auto, 'press_at_max_pct')
         p(f'On AutoSet nights the machine spent {am:.0f}% of the time at its ceiling, with a median pressure of {_mean(auto, "press_med"):.1f} and a 95th percentile of {_mean(auto, "press_95"):.1f} cmH2O.'
           + (' Above about 20% at the ceiling means the machine wanted more than it was allowed; whether that matters depends on whether events or flow limitation got through, which the sections above answer.' if am > 20 else ' It had room to work; the ceiling was not a constraint.'))
+        from .explain import pressure_reading
+        fp, ip = pressure_reading(auto)
+        if fp: p(' '.join(fp + ip[:1]))
         p(f'A fixed pressure near the 95th percentile ({_mean(auto, "press_95"):.0f} cmH2O) is the usual starting point if you move to CPAP mode. That is a question for the prescriber, not a change to make on your own.')
 
     # ---- flow limitation

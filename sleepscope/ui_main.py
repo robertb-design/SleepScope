@@ -103,6 +103,36 @@ class BarAxis(pg.AxisItem):
         return [self.labels[int(v)] if 0 <= int(round(v)) < len(self.labels) and abs(v - round(v)) < 0.01 else '' for v in values]
 
 
+def draw_pressure_profile(gl, row, nights, scope):
+    """Two charts: hours spent at each 0.5 cmH2O band, and events per hour of time at that band (machine events, RERA-like runs)."""
+    prof = scoring.pressure_profile(nights)
+    if not prof: return
+    top, rest = scoring.pressure_profile.last_split
+    tot = sum(b['minutes'] for b in prof) or 1
+    prof = [b for b in prof if b['minutes'] / tot >= 0.005]               # drop start up and ramp slivers
+    if not prof: return
+    xs = np.array([b['lo'] + 0.25 for b in prof]); hrs = np.array([b['minutes'] / 60 for b in prof])
+    rate = np.array([b['rate'] if np.isfinite(b['rate']) and b['minutes'] >= 30 else 0 for b in prof])       # under 30 min a rate is noise
+    rr = np.array([b['rera_rate'] if np.isfinite(b['rera_rate']) and b['minutes'] >= 30 else 0 for b in prof])
+    def mk(col, title):
+        p = gl.addPlot(row=row, col=col); style_plot(p); cap = explain.overview_caption(title)
+        p.setTitle(f"<span style='font-size:10pt;color:#0b0b0b'>{title} ({scope})</span>" + (f"<br><span style='font-size:8.5pt;color:#52514e'>{cap}</span>" if cap else ''))
+        p.setLabel('bottom', 'pressure, cmH2O'); p.setMouseEnabled(x=False, y=False); p.hideButtons(); p.setXRange(xs.min() - 0.5, xs.max() + 0.5, padding=0)
+        p.getAxis('bottom').setTicks([[(b['lo'] + 0.25, f"{b['lo']:g}") for b in prof]]); return p
+    p = mk(0, 'Time at pressure'); p.setLabel('left', 'hours')
+    p.addItem(pg.BarGraphItem(x=xs, height=hrs, width=0.42, brush=pg.mkBrush(C['blue']), pen=pg.mkPen('w')))
+    for x0, h, b in zip(xs, hrs, prof):
+        t = pg.TextItem(f"{100 * b['minutes'] / tot:.0f}%", color=C['text2'], anchor=(0.5, 1)); t.setPos(x0, h); p.addItem(t)
+    p.setYRange(0, max(hrs) * 1.25 + 0.1)
+    p = mk(1, 'Events per hour at each pressure'); p.setLabel('left', 'per hour')
+    p.addItem(pg.BarGraphItem(x=xs - 0.11, height=rate, width=0.2, brush=pg.mkBrush(C['red']), pen=pg.mkPen('w')))
+    p.addItem(pg.BarGraphItem(x=xs + 0.11, height=rr, width=0.2, brush=pg.mkBrush(C['violet']), pen=pg.mkPen('w')))
+    p.setYRange(0, max(1, float(max(rate.max(), rr.max()))) * 1.2)
+    if top['minutes']:
+        t = pg.TextItem(f"At the top: {top['pct']:.0f}% of time, events {top['rate']:.1f}/h, RERA-like {top['rera_rate']:.1f}/h\nBelow it: events {rest['rate']:.1f}/h, RERA-like {rest['rera_rate']:.1f}/h",
+                        color=C['text2'], anchor=(0, 0)); t.setPos(xs.min() - 0.45, p.viewRange()[1][1]); p.addItem(t)
+
+
 class OverviewView(QtWidgets.QWidget):
     night_clicked = QtCore.Signal(int)
     def __init__(self):
@@ -173,6 +203,7 @@ class OverviewView(QtWidgets.QWidget):
         else:
             p = plot(3, 1, 'Time at max pressure (% of night) and periodic breathing windows (magenta)', '%')
             bars(p, g('press_at_max_pct'), C['blue']); p.plot(x, g('periodic_windows'), pen=pg.mkPen(C['magenta'], width=2), symbol='o', symbolBrush=C['magenta'], symbolPen=None)
+        draw_pressure_profile(self.gl, 4, [n for n in nights if n.sessions], 'all nights shown')
         tot_h = sum(n.hours for n in nights); ev = sum(s['OA'] + s['CA'] + s['H'] + s['UA'] for s in S)
         self.note.setText(f"{len(nights)} nights, {tot_h:.1f} h, mean {tot_h / len(nights):.2f} h/night, machine AHI {ev / tot_h:.2f} overall, app flow-only AHI {np.nanmean(g('app_AHI')):.2f}, app RDI {np.nanmean(g('app_RDI')):.2f}. Click a bar to open that night.")
     def _click(self, ev, p):
@@ -212,6 +243,7 @@ class BreathView(QtWidgets.QWidget):
                     it = pg.ScatterPlotItem([pr], [j + np.random.uniform(-0.2, 0.2)], size=9, brush=pg.mkBrush(EVENT_COLORS[lab]) if e.source == 'machine' else pg.mkBrush('w'), pen=pg.mkPen(EVENT_COLORS[lab], width=1.5))
                     p.addItem(it)
         p.getAxis('left').setTicks([[(j, l) for j, l in enumerate(labs)]]); p.setYRange(-0.6, len(labs) - 0.4); p.setXRange(3, 21)
+        draw_pressure_profile(self.gl, 4, [nt], nt.label)
         self.note.setText(f'{sum(len(b["t0"]) for b in brs)} breaths segmented from the 25 Hz flow. Plateau ratio: mean of middle 50% of inspiration over its peak (a half sine scores about 0.90; above 0.95 is a flat top). PIF/PEF well below 0.7 with a long Ti is the inspiratory shape seen during flow limited runs.')
 
 

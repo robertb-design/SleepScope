@@ -92,6 +92,15 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
   excluding dips within 10 s of ring motion 30 or more.
 - Pressure setting column: STR.edf when present, otherwise the trace with each session's ramp (45 min) skipped,
   labelled "(trace)".
+- Time at pressure: `scoring.pressure_profile` / `SS.pressureProfile` bin the 2 s Press trace into 0.5 cmH2O bands (lower edge
+  inclusive, samples under 3 ignored), count machine OA/CA/H/UA and RERA-like flow limitation runs at onset, and give events per
+  hour of time in that band; `last_split` / `.top` compares time within 0.1 of each night's top setting (STR max, else trace max)
+  with the rest. Bands under 0.5% of time are hidden in charts and rates need 30 minutes. Shown in Overview (both apps), the
+  desktop per night pressure view, the Synopsis (`explain.pressure_reading` / `SS.pressureReading`) and Claude's context.
+- RERA-like: desktop needs a breath with peak flow 1.5 times baseline within 10 s after the run; the phone uses its 3 s
+  ventilation envelope at 1.6 times the 2 min baseline (`RERA_THR`), calibrated to agree on 416 of 448 runs on a real card.
+- Claude context events: every machine event is sent; app events fill a 700 line budget newest night first, so recent
+  nights are never cut (they were, at the old 400 line cap).
 - Watch columns: `w_bd` Breathing Disturbances (shown beside the machine AHI, never instead of it), `w_cover` share of
   Watch asleep minutes overlapping machine sessions, `w_asleep`, `w_deeprem`, `w_hrv`, `w_rr`. Nights with only
   daytime Watch samples get no Watch data.
