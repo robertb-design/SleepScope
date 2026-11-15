@@ -107,6 +107,44 @@ def to_sync(data, since: dt.date | None = None):
     return o
 
 
+STORE_NAME = 'Watch nights.json'      # in the Sleepscope folder: every Watch night ever read, so old exports can be deleted
+STORE_DAYS = 400
+
+
+def from_sync(o):
+    """Inverse of to_sync: wall clock text back to datetimes."""
+    p = lambda t: dt.datetime.strptime(t, '%Y-%m-%d %H:%M:%S')
+    out = EMPTY(); out['sleep'] = [(p(r['s']), p(r['e']), r['stage'], r.get('src', '')) for r in o.get('sleep', [])]
+    for k in ('hr', 'spo2', 'rr', 'hrv', 'bd'): out[k] = [(p(t), float(v)) for t, v in o.get(k, [])]
+    return out
+
+
+def merge(a, b):
+    """Union of two data dicts, duplicates dropped, sorted; anything older than STORE_DAYS is let go."""
+    lim = dt.datetime.now() - dt.timedelta(days=STORE_DAYS); out = EMPTY()
+    out['sleep'] = sorted({r for r in (a or EMPTY())['sleep'] + (b or EMPTY())['sleep'] if r[0] >= lim})
+    for k in ('hr', 'spo2', 'rr', 'hrv', 'bd'):
+        out[k] = sorted({(t, round(v, 3)) for t, v in (a or EMPTY()).get(k, []) + (b or EMPTY()).get(k, []) if t >= lim})
+    return out
+
+
+def load_store(folder):
+    """(data, meta) from Watch nights.json, or (None, {}) when there is none yet."""
+    import json
+    try:
+        with open(os.path.join(folder, STORE_NAME), encoding='utf-8') as f: j = json.load(f)
+        return from_sync(j.get('data', {})), j.get('meta', {})
+    except Exception:
+        return None, {}
+
+
+def save_store(folder, data, meta):
+    import json
+    path = os.path.join(folder, STORE_NAME); tmp = path + '.part'
+    with open(tmp, 'w', encoding='utf-8') as f: json.dump({'meta': meta, 'data': to_sync(data)}, f, separators=(',', ':'))
+    os.replace(tmp, path)
+
+
 def read_shortcut_csv(path):
     """Read the small file the SleepScope Health Shortcut writes on the phone: one line per record,
     type,start,end,value (Shortcuts' default date wording such as "Nov 1, 2026 at 1:20 AM" is accepted, so is yyyy-MM-dd HH:mm:ss).

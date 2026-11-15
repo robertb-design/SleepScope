@@ -247,7 +247,8 @@ def import_o2ring_raw(path, nights):
     t0 = dt.datetime.strptime(os.path.basename(path), '%Y%m%d%H%M%S').timestamp()
     sp, pu, mo = a[:, 0], a[:, 1], a[:, 2]
     sp[(sp == 255) | (sp < 50) | (sp > 100)] = np.nan; pu[(pu == 255) | (pu < 25)] = np.nan; mo[mo == 255] = np.nan
-    return _attach_oximetry(t0 + np.arange(n, dtype=float), sp, pu, mo, np.zeros(n), True, False, nights)
+    data = (t0 + np.arange(n, dtype=float), sp, pu, mo, np.zeros(n), True, False)
+    return data if nights is None else _attach_oximetry(*data, nights)
 
 
 def import_oximeter_csv(path, nights):
@@ -294,9 +295,10 @@ def import_oximeter_csv(path, nights):
             try: flag = max(flag, float(r[i]) if len(r) > i and r[i].strip() not in ('', '--') else 0.0)
             except ValueError: pass
         ts.append(t); sp.append(s); pu.append(p); mo.append(mv); al.append(flag)
-    if not ts: return 0
+    if not ts: return None if nights is None else 0
     ts = np.array([t.timestamp() for t in ts]); sp = np.array(sp); pu = np.array(pu); mo = np.array(mo); al = np.array(al)
-    return _attach_oximetry(ts, sp, pu, mo, al, mi is not None, bool(ai), nights)
+    data = (ts, sp, pu, mo, al, mi is not None, bool(ai))
+    return data if nights is None else _attach_oximetry(*data, nights)
 
 
 def _attach_oximetry(ts, sp, pu, mo, al, has_motion, has_alerts, nights):
@@ -308,19 +310,28 @@ def _attach_oximetry(ts, sp, pu, mo, al, has_motion, has_alerts, nights):
             m = (ts >= a - 60) & (ts <= b + 60)
             if m.sum() < 30: continue
             grid = a + np.arange(int(s.duration))
-            s.spo2 = np.interp(grid, ts[m], sp[m], left=np.nan, right=np.nan).astype(np.float32)
-            s.pulse = np.interp(grid, ts[m], pu[m], left=np.nan, right=np.nan).astype(np.float32)
-            s.spo2 = np.nan_to_num(s.spo2, nan=-1); s.pulse = np.nan_to_num(s.pulse, nan=-1)
-            if has_motion and np.any(~np.isnan(mo[m])):
-                s.motion = np.nan_to_num(np.interp(grid, ts[m], np.nan_to_num(mo[m], nan=0.0), left=np.nan, right=np.nan), nan=-1).astype(np.float32)
-            else: s.motion = None
-            s.ox_alerts = [dt.datetime.fromtimestamp(float(t)) for t in ts[m][al[m] > 0]] if has_alerts else []
+            # interpolate only inside this recording, and only across gaps under 10 s, so two files of one night merge cleanly
+            tt = ts[m]; inside = (grid >= tt[0]) & (grid <= tt[-1])
+            j = np.clip(np.searchsorted(tt, grid), 1, len(tt) - 1); gap = (tt[j] - tt[j - 1]) > 10
+            def lay(old, vals):
+                new = np.interp(grid, tt, vals, left=np.nan, right=np.nan); new[~inside | gap] = np.nan
+                new = np.nan_to_num(new, nan=-1).astype(np.float32)
+                if old is not None and len(old) == len(new): new = np.where(new >= 0, new, old).astype(np.float32)
+                return new
+            prev_sp = getattr(s, 'spo2', None) if isinstance(getattr(s, 'spo2', None), np.ndarray) else None
+            prev_pu = getattr(s, 'pulse', None) if isinstance(getattr(s, 'pulse', None), np.ndarray) else None
+            s.spo2 = lay(prev_sp, sp[m]); s.pulse = lay(prev_pu, pu[m])
+            prev_mo = getattr(s, 'motion', None) if isinstance(getattr(s, 'motion', None), np.ndarray) else None
+            if has_motion and np.any(~np.isnan(mo[m])): s.motion = lay(prev_mo, np.nan_to_num(mo[m], nan=0.0))
+            elif prev_mo is None: s.motion = None
+            new_al = [dt.datetime.fromtimestamp(float(t)) for t in ts[m][al[m] > 0]] if has_alerts else []
+            s.ox_alerts = sorted(set((getattr(s, 'ox_alerts', None) or []) + new_al))
             filled += 1
     return filled
 
 
 # ----------------------------------------------------------------------------- find companion files near the card
-def find_companion_files(folders, max_depth=2):
+def find_companion_files(folders, max_depth=6):
     """Look through the given folders (a few levels deep) for oximeter CSV exports (Wellue O2Ring and similar: a header
     with a time column and an oxygen/SpO2 column), SleepScope Health Shortcut files and Apple Health exports (export.zip or the
     unzipped apple_health_export/export.xml). Returns (oximeter_paths, health_paths)."""
@@ -334,13 +345,14 @@ def find_companion_files(folders, max_depth=2):
         for dirpath, dirnames, filenames in os.walk(folder):
             if dirpath.count(os.sep) - base_depth >= max_depth: dirnames[:] = []
             dirnames[:] = [d for d in dirnames if not d.startswith('.') and d.lower() not in ('datalog', 'node_modules', 'appdata', '_to_delete', '_internal')]
-            if os.path.basename(dirpath).lower() == 'apple_health_export':        # unzipped Health export: take export.xml, skip its ECG csvs and routes
-                dirnames[:] = []
+            if os.path.basename(dirpath).lower() == 'apple_health_export':        # unzipped Health export: take export.xml, skip its ECG csvs and routes,
+                dirnames[:] = [d for d in dirnames if d.lower() not in ('electrocardiograms', 'workout-routes')]   # but keep looking for nested copies
                 if 'export.xml' in filenames: health.append(os.path.join(dirpath, 'export.xml'))
-                continue
+                filenames = [f for f in filenames if f.lower().endswith('.zip')]
             for fn in filenames:
                 low = fn.lower()
                 path = os.path.join(dirpath, fn)
+                if low == 'sleepscope card.zip': continue
                 if low.endswith('.zip') and 'export' in low:                        # Health export.zip (export.zip, export (1).zip ...)
                     try:
                         with zipfile.ZipFile(path) as zz:
@@ -361,6 +373,34 @@ def find_companion_files(folders, max_depth=2):
 
 
 # ----------------------------------------------------------------------------- nights the card missed: machine summary from STR.edf
+def health_export_date(path):
+    """The ExportDate Apple writes near the top of export.xml (zip member or file), else the file time. Used to pick the newest export."""
+    import re as _re
+    try:
+        if path.lower().endswith('.zip'):
+            with zipfile.ZipFile(path) as z:
+                name = next(n for n in z.namelist() if n.endswith('apple_health_export/export.xml'))
+                with z.open(name) as f: head = f.read(20000)
+        else:
+            with open(path, 'rb') as f: head = f.read(20000)
+        m = _re.search(rb'<ExportDate value="([^"]+)"', head)
+        if m: return dt.datetime.strptime(m.group(1).decode()[:19], '%Y-%m-%d %H:%M:%S').timestamp()
+    except Exception:
+        pass
+    try: return os.path.getmtime(path)
+    except OSError: return 0.0
+
+
+def ring_start(path):
+    """Start of a ring recording (epoch s) from its first sample, for de-duplicating the same night saved several ways."""
+    try:
+        d = import_oximeter_csv(path, None)
+        if d is not None and len(d[0]): return float(d[0][0]), int(np.isfinite(d[1]).sum())
+    except Exception:
+        pass
+    return None, 0
+
+
 def str_day(str_data, label, i):
     """All samples of one STR signal for day index i (some signals, such as MaskOn and MaskOff, carry several per day)."""
     sig = str_data['signals'].get(label); n = len(str_data['days'])

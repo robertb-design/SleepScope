@@ -287,8 +287,16 @@ const SS = (() => {
     let filled = 0;
     for (const nt of nights) for (const s of nt.sessions) {
       const a = s.start.getTime() / 1000, b = a + s.duration; const idx = []; for (let i = 0; i < ts.length; i++) if (ts[i] >= a - 60 && ts[i] <= b + 60) idx.push(i); if (idx.length < 30) continue;
-      const n = Math.floor(s.duration); s.spo2 = new Float32Array(n).fill(-1); s.pulse = new Float32Array(n).fill(-1); s.motion = hasMo ? new Float32Array(n).fill(-1) : null; s.oxAlerts = []; let j = 0;
-      for (let k = 0; k < n; k++) { const t = a + k; while (j + 1 < idx.length && ts[idx[j + 1]] <= t) j++; const i0 = idx[j], i1 = idx[Math.min(j + 1, idx.length - 1)]; if (t < ts[i0] - 30 || t > ts[i1] + 30) continue; const w = ts[i1] > ts[i0] ? (t - ts[i0]) / (ts[i1] - ts[i0]) : 0; const ww = Math.max(0, Math.min(1, w)); s.spo2[k] = sp[i0] + (sp[i1] - sp[i0]) * ww; s.pulse[k] = pu[i0] + (pu[i1] - pu[i0]) * ww; if (s.motion) { const m0 = Number.isFinite(mo[i0]) ? mo[i0] : 0, m1 = Number.isFinite(mo[i1]) ? mo[i1] : 0; s.motion[k] = Math.max(m0, m1); } }
+      // merge, never overwrite: a night split over two ring files keeps both parts (desktop _attach_oximetry does the same)
+      const n = Math.floor(s.duration); const keep = (arr) => arr && arr.length === n ? arr : null;
+      const pS = keep(s.spo2), pP = keep(s.pulse), pM = keep(s.motion);
+      s.spo2 = pS ? Float32Array.from(pS) : new Float32Array(n).fill(-1); s.pulse = pP ? Float32Array.from(pP) : new Float32Array(n).fill(-1);
+      s.motion = hasMo ? (pM ? Float32Array.from(pM) : new Float32Array(n).fill(-1)) : (pM || null); s.oxAlerts = s.oxAlerts || [];
+      const first = ts[idx[0]], last = ts[idx[idx.length - 1]]; let j = 0;
+      for (let k = 0; k < n; k++) { const t = a + k; if (t < first || t > last) continue; while (j + 1 < idx.length && ts[idx[j + 1]] <= t) j++; const i0 = idx[j], i1 = idx[Math.min(j + 1, idx.length - 1)]; if (ts[i1] - ts[i0] > 10) continue;
+        const w = ts[i1] > ts[i0] ? (t - ts[i0]) / (ts[i1] - ts[i0]) : 0; const ww = Math.max(0, Math.min(1, w)); const vs = sp[i0] + (sp[i1] - sp[i0]) * ww, vp = pu[i0] + (pu[i1] - pu[i0]) * ww;
+        if (Number.isFinite(vs)) s.spo2[k] = vs; if (Number.isFinite(vp)) s.pulse[k] = vp;
+        if (hasMo && s.motion) { const m0 = Number.isFinite(mo[i0]) ? mo[i0] : 0, m1 = Number.isFinite(mo[i1]) ? mo[i1] : 0; s.motion[k] = Math.max(m0, m1); } }
       for (const q of idx) if (al[q] > 0) s.oxAlerts.push(new Date(ts[q] * 1000));
       s.hasOx = true; filled++;
     }

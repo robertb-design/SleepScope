@@ -81,6 +81,12 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 - About me: kept in `About me.txt` in the user's Sleepscope folder (their Dropbox, never the repo). The desktop takes it
   when its own field is empty or still holds the last copy it took, writes edits back, and packs it as `about.txt` in
   `SleepScope card.zip`; the phone takes `about.txt` by the same rule.
+- Health exports are found anywhere under the companion folders (depth 6, nested unzipped copies included); the newest by its
+  `<ExportDate>` (`loader.health_export_date`) is read once in a background `HealthWorker` and merged into
+  `Watch nights.json` in the Sleepscope folder (`apple_health.load_store/merge/save_store`, 400 days); nights attach from that store.
+- Ring recordings found anywhere are de-duplicated by start minute (most readings wins) and copied into `Sleepscope/Ring archive`
+  (`MainWindow._ring_archive`, `index.json` caches start times). Attaching merges: a night split over two files keeps both parts
+  (`_attach_oximetry` / `attachOx` fill only inside each recording and never overwrite readings already there).
 - Watch data reaches the phone as `health.json` inside `SleepScope card.zip` (desktop `apple_health.to_sync`, phone
   `AH.fromSync`), trimmed to the card's nights.
 

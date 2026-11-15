@@ -8,10 +8,10 @@ STYLE = """<style> h1{color:#1baf7a} h2{color:#2a78d6; margin-top:18px} .box{bac
 STEPS = [
     ('Ring', 'Every morning',
      'Plug the ring into the PC, open <b>O2 Insight Pro</b>, click <b>Download</b>. '
-     'Or from the phone: <b>ViHealth</b>, open last night, <b>Share</b>, <b>CSV</b>, save to the <b>Dropbox \\ Sleepscope</b> folder.'),
+     'Or from the phone: <b>ViHealth</b>, open last night, <b>Share</b>, <b>CSV</b>, save to the <b>Dropbox \\ Sleepscope</b> folder.'
+     ' The ring holds only its last 4 recordings, so do not skip more than two mornings. SleepScope copies every recording into <b>Sleepscope \\ Ring archive</b>, so deleting it in O2 Insight Pro or ViHealth afterwards loses nothing.'),
     ('Watch', 'Sundays',
-     'iPhone <b>Health</b> app, tap your profile picture, <b>Export All Health Data</b>, '
-     'save <b>export.zip</b> to the <b>Dropbox \\ Sleepscope</b> folder, replacing the old one.'),
+     'iPhone <b>Health</b> app, tap your profile picture, <b>Export All Health Data</b>, <b>Save to Files</b>, anywhere in the <b>Dropbox \\ Sleepscope</b> folder. Do not tap the file afterwards; tapping unzips it. SleepScope finds the newest export on its own, keeps every Watch night in <b>Watch nights.json</b>, and old exports can be deleted.'),
     ('PC', 'Every morning',
      'Card in, open <b>SleepScope</b>, click <b>Open SD card</b> and pick the card drive (for example <b>F:</b>). '
      'This also writes <b>SleepScope card.zip</b> to Dropbox for the phone. Then put the card back in the AirSense.'),

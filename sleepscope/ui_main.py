@@ -38,6 +38,16 @@ class LoadWorker(QtCore.QThread):
             import traceback; self.failed.emit(traceback.format_exc())
 
 
+class HealthWorker(QtCore.QThread):
+    """Reads one Apple Health export off the UI thread (a full export.xml can be several hundred MB)."""
+    done = QtCore.Signal(object, object)
+    def __init__(self, path, since):
+        super().__init__(); self.path, self.since = path, since
+    def run(self):
+        try: self.done.emit(self.path, apple_health.read_export(self.path, date_from=self.since))
+        except Exception as e: self.done.emit(self.path, e)
+
+
 class PhoneSyncWorker(QtCore.QThread):
     """Writes the card (last 45 nights of DATALOG, STR.edf, Identification) as one zip into a synced folder such as
     Dropbox\\SleepScope, so the phone app can open it without reading the SD card itself."""
@@ -625,45 +635,103 @@ class MainWindow(QtWidgets.QMainWindow):
                  os.path.join(home, 'Dropbox'), os.path.join(home, 'Dropbox', 'SleepScope'), os.path.join(home, 'Dropbox', 'O2Ring'),
                  os.path.join(home, 'OneDrive'), os.path.join(home, 'Downloads'), os.path.join(home, 'Documents', 'SleepScope')]
         return [c for c in cands if c]
+    RING_ARCHIVE = 'Ring archive'
+
+    def _ring_archive(self, ox_files):
+        """One file per ring recording. Every recording found anywhere is copied once into Sleepscope/Ring archive, so
+        deleting it in O2 Insight Pro or ViHealth no longer loses the night; copies of the same recording (ViHealth CSV,
+        PC CSV, raw file) are reduced to the one with the most readings. Returns the files to import."""
+        import shutil
+        folder = self.phone_folder(); arch = os.path.join(folder, self.RING_ARCHIVE) if folder else None
+        idx_path = os.path.join(arch, 'index.json') if arch else None; idx = {}
+        if arch:
+            try: os.makedirs(arch, exist_ok=True)
+            except OSError: arch = None
+        if idx_path:
+            try:
+                with open(idx_path, encoding='utf-8') as f: idx = json.load(f)
+            except Exception: idx = {}
+        groups = {}
+        for p in ox_files:
+            try: st_ = os.stat(p); key = f"{os.path.basename(p)}|{st_.st_size}|{int(st_.st_mtime)}"
+            except OSError: continue
+            if key not in idx: idx[key] = list(loader.ring_start(p))
+            start, nvalid = idx[key]
+            if not start: continue
+            groups.setdefault(int(start // 60), []).append((nvalid, p.startswith(arch) if arch else False, p))
+        chosen = []
+        for g in groups.values():
+            g.sort(key=lambda r: (r[0], r[1]), reverse=True); best = g[0][2]
+            if arch and not best.startswith(arch):
+                dst = os.path.join(arch, os.path.basename(best))
+                try:
+                    if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(best): shutil.copy2(best, dst)
+                    best = dst
+                except OSError: pass
+            chosen.append(best)
+        if idx_path:
+            try:
+                with open(idx_path, 'w', encoding='utf-8') as f: json.dump(idx, f)
+            except OSError: pass
+        return sorted(chosen)
+
     def _auto_companions(self, root):
-        """Find oximeter CSVs (and Health Shortcut files) near the card or in the companion folder and attach them to the loaded nights."""
-        self.apple_data = None
+        """Find ring recordings and Apple Health exports anywhere in the Sleepscope folder (and near the card), keep them, attach them."""
+        self.apple_data = None; self.ring_files = []
         try:
             ox_files, health_files = loader.find_companion_files(self.companion_folders(root))
         except Exception:
             return
+        try: ox_files = self._ring_archive(ox_files)
+        except Exception: pass
+        self.ring_files = ox_files
         filled = 0; used = 0
         for p in ox_files:
-            try:
-                n = loader.import_oximeter_csv(p, self.nights)
-            except Exception:
-                n = 0
+            try: n = loader.import_oximeter_csv(p, self.nights)
+            except Exception: n = 0
             if n: filled += n; used += 1
-        hmatched = 0
+        # Apple Health: Watch nights.json is the running record; the newest export (by the date inside it) is read once and merged in
+        folder = self.phone_folder(); store, meta = (apple_health.load_store(folder) if folder else (None, {}))
         exports = [p for p in health_files if not p.lower().endswith(('.txt', '.csv'))]
-        if exports:                                                    # newest Health export wins; parsed once per file version
-            p = max(exports, key=os.path.getmtime); key = (p, os.path.getmtime(p), self.nights[0].date)
-            try:
-                if getattr(self, '_health_cache', (None,))[0] != key:
-                    self.statusBar().showMessage('Reading Apple Health export…'); QtWidgets.QApplication.processEvents()
-                    self._health_cache = (key, apple_health.read_export(p, date_from=self.nights[0].date))
-                self.apple_data = self._health_cache[1]; hmatched = apple_health.attach(self.apple_data, self.nights)
-            except Exception:
-                pass
-        for p in health_files:
-            if not p.lower().endswith(('.txt', '.csv')) or hmatched: continue
-            try:
-                data = apple_health.read_shortcut_csv(p); hmatched = max(hmatched, apple_health.attach(data, self.nights))
-                if hmatched: self.apple_data = data
-            except Exception:
-                pass
-        if filled or hmatched:
+        newest = max(exports, key=loader.health_export_date) if exports else None
+        if newest and loader.health_export_date(newest) > meta.get('export_date', 0) + 1:
+            if not (getattr(self, 'health_worker', None) and self.health_worker.isRunning()):
+                since = min(self.nights[0].date, dt.date.today() - dt.timedelta(days=60))
+                self.statusBar().showMessage('Reading the new Apple Health export in the background; Watch nights appear when it finishes…')
+                self.health_worker = HealthWorker(newest, since); self.health_worker.done.connect(lambda p, d, f=folder, s=store: self._health_read(p, d, f, s)); self.health_worker.start()
+        hmatched = 0
+        if store:
+            self.apple_data = store; hmatched = apple_health.attach(store, self.nights)
+        else:
+            for p in health_files:
+                if not p.lower().endswith(('.txt', '.csv')) or hmatched: continue
+                try:
+                    data = apple_health.read_shortcut_csv(p); hmatched = max(hmatched, apple_health.attach(data, self.nights))
+                    if hmatched: self.apple_data = data
+                except Exception:
+                    pass
+        self._companions_done(filled, used, hmatched)
+
+    def _health_read(self, path, data, folder, store):
+        if isinstance(data, Exception):
+            self.statusBar().showMessage(f'Could not read the Apple Health export ({data}).'); return
+        merged = apple_health.merge(store, data)
+        if folder:
+            try: apple_health.save_store(folder, merged, {'export_date': loader.health_export_date(path), 'source': os.path.basename(os.path.dirname(path)) + '/' + os.path.basename(path)})
+            except OSError: pass
+        self.apple_data = merged; n = apple_health.attach(merged, self.nights)
+        self._companions_done(0, 0, n, refresh=True)
+        if folder and self.phone_folder(): self._phone_sync()
+
+    def _companions_done(self, filled, used, hmatched, refresh=False):
+        if filled or hmatched or refresh:
             for nt in self.nights: scoring.night_stats(nt)
             self._fill_stats(); self.overview.set_nights(self.nights); self.synopsis.set_nights(self.nights); self.landscape.set_nights(self.nights); self._refresh_home()
             parts = []
-            if filled: parts.append(f'oximeter: {used} file{"s" if used != 1 else ""} found, SpO2 attached to {filled} session{"s" if filled != 1 else ""}')
-            if hmatched: parts.append(f'Apple Health: matched {hmatched} night{"s" if hmatched != 1 else ""}')
+            if filled: parts.append(f'ring: {used} recording{"s" if used != 1 else ""}, oxygen on {filled} session{"s" if filled != 1 else ""}')
+            if hmatched: parts.append(f'Apple Watch: {hmatched} night{"s" if hmatched != 1 else ""}')
             self.statusBar().showMessage(f'{len(self.nights)} nights loaded. ' + '; '.join(parts) + '.')
+
     @staticmethod
     def sync_roots():
         """Dropbox and OneDrive roots on this PC. Covers 'Dropbox', team folders named '<Team> Dropbox', and the paths
@@ -719,7 +787,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, 'sync_worker', None) is not None and self.sync_worker.isRunning(): return
         try:
             import time as _t
-            ring = [p_ for p_ in loader.find_companion_files(self.companion_folders(self.data.get('root')))[0] if _t.time() - os.path.getmtime(p_) < 60 * 86400]
+            ring = [p_ for p_ in (getattr(self, 'ring_files', None) or loader.find_companion_files(self.companion_folders(self.data.get('root')))[0]) if _t.time() - os.path.getmtime(p_) < 60 * 86400]
         except Exception: ring = []
         self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights, ring, getattr(self, 'apple_data', None))
         self.sync_worker.done.connect(lambda msg: self.statusBar().showMessage(msg, 15000)); self.sync_worker.start()
