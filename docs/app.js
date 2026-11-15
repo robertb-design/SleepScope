@@ -74,8 +74,16 @@ async function addFiles(list, label) {
   if (!hasCard) { let last = null; try { last = await idb.get('last'); } catch (err) {}
     if (!last || !last.files) { $('loadmsg').textContent = 'Load the card zip first; ring and Health files are added to it.'; return; }
     files = Object.assign({}, last.files, files); label = last.label + ' + ' + label; }
+  else { // a new card zip adds to what the phone already holds, so nights older than the zip's window are kept
+    let last = null; try { last = await idb.get('last'); } catch (err) {}
+    if (last && last.files) { let added = 0; for (const [k, v] of Object.entries(last.files)) if (!(k in files) && (/^\d{8}\//.test(k) || k.startsWith('companion/'))) { files[k] = v; added++; }
+      const days = [...new Set(Object.keys(files).filter(k => /^\d{8}\//.test(k)).map(k => k.slice(0, 8)))].sort();
+      if (days.length > KEEP_NIGHTS) { const drop = new Set(days.slice(0, days.length - KEEP_NIGHTS)); for (const k of Object.keys(files)) if (drop.has(k.slice(0, 8)) && /^\d{8}\//.test(k)) delete files[k]; }
+      if (added) label = label + ` (plus ${days.length} nights kept on this phone)`; }
+  }
   await loadFiles(files, label); try { await idb.put('last', { files, label, when: Date.now() }); } catch (err) {}
 }
+const KEEP_NIGHTS = 120;   // nights the phone keeps across card zips (about 1.5 MB each)
 $('filein').onchange = async (e) => { const list = [...e.target.files]; if (!list.length) return; try { await addFiles(list, list.length === 1 ? list[0].name : list.length + ' files'); } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
 $('samplebtn').onclick = async () => { $('loadmsg').textContent = 'Fetching sample card…'; try { const r = await fetch('sample.zip'); const z = await JSZip.loadAsync(await r.arrayBuffer()); const files = {}; for (const [name, entry] of Object.entries(z.files)) if (!entry.dir && /\.edf$/i.test(name)) files[name] = await entry.async('arraybuffer'); await loadFiles(normalise(files), 'sample card'); } catch (e) { $('loadmsg').textContent = 'Sample not available offline yet: ' + e; } };
 let appleData = null;

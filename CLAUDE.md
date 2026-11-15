@@ -87,6 +87,11 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 - Ring recordings found anywhere are de-duplicated by start minute (most readings wins) and copied into `Sleepscope/Ring archive`
   (`MainWindow._ring_archive`, `index.json` caches start times). Attaching merges: a night split over two files keeps both parts
   (`_attach_oximetry` / `attachOx` fill only inside each recording and never overwrite readings already there).
+- Card history (data is never lost to a card or an update): every load copies new or grown night folders from the card, plus
+  any old hand-made card copies in the Sleepscope folder on first run, into `Sleepscope/Card history` (`loader.sync_to_history`;
+  `MainWindow.history_folder`, falls back to %LOCALAPPDATA%/SleepScope), then reads from that copy; with the card out the app
+  opens the history. Older STR.edf files go to `Card history/STR older`. The phone merges each new card zip with the files it
+  already holds in IndexedDB (`addFiles`, newest `KEEP_NIGHTS` = 120 nights), and IndexedDB survives app updates.
 - Watch data reaches the phone as `health.json` inside `SleepScope card.zip` (desktop `apple_health.to_sync`, phone
   `AH.fromSync`), trimmed to the card's nights.
 
@@ -135,5 +140,4 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 ## Open ideas (not built yet)
 - Connect Dropbox on the phone (Dropbox app key, PKCE) so the phone loads the latest zip without a file pick.
 - One page doctor report export (week summary in the format a physician expects).
-- Merge an archive folder with the live card so history and new nights load together.
 - Apple Health: the full export route is built and automatic. The Shortcut route remains but is fiddly.

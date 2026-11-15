@@ -22,11 +22,19 @@ class LoadWorker(QtCore.QThread):
     progress = QtCore.Signal(int, int, str)
     done = QtCore.Signal(object)
     failed = QtCore.Signal(str)
-    def __init__(self, root):
-        super().__init__(); self.root = root
+    def __init__(self, root, history=None, extra=()):
+        super().__init__(); self.root, self.history, self.extra = root, history, list(extra)
     def run(self):
         try:
-            data = loader.scan(self.root, progress=lambda i, n, name: self.progress.emit(i, n, 'Reading ' + name))
+            src = self.root; self.copied = 0
+            if self.history:                                          # keep our own copy of every night, then read from it
+                os.makedirs(self.history, exist_ok=True)
+                for x in self.extra + [self.root]:
+                    try: self.copied += loader.sync_to_history(x, self.history, lambda i, n, m: self.progress.emit(i, n, m))
+                    except Exception: pass
+                if loader.card_parts(self.history)[1] and os.listdir(os.path.join(self.history, 'DATALOG')): src = self.history
+            data = loader.scan(src, progress=lambda i, n, name: self.progress.emit(i, n, 'Reading ' + name))
+            data['card_root'] = self.root; data['history'] = src == self.history
             nights = data['nights']
             for i, nt in enumerate(nights):
                 self.progress.emit(i, len(nights), 'Scoring ' + nt.label)
@@ -496,9 +504,9 @@ class MainWindow(QtWidgets.QMainWindow):
         meth = QtWidgets.QTextBrowser(); meth.setHtml(METHODS); self.tabs.addTab(Page(meth, 'Methods', 'How every number is computed and how far to trust it.', '#1d4f91'), 'Methods')
         self.tabs.currentChanged.connect(self._tab_changed)
         self._refresh_home()
-        last = SETTINGS.value('root', '')
-        if last and os.path.isdir(last):
-            QtCore.QTimer.singleShot(200, lambda: self.load(last))
+        last = SETTINGS.value('root', ''); hist = self.history_folder()
+        if (last and os.path.isdir(last)) or (hist and os.path.isdir(os.path.join(hist, 'DATALOG'))):
+            QtCore.QTimer.singleShot(200, lambda: self.load(last if last and os.path.isdir(last) else hist))
         else:
             self.statusBar().showMessage('Open the SD card (the card root or its DATALOG folder), or click Load sample data to try the app with made-up data.')
 
@@ -528,8 +536,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def load(self, root):
         if getattr(self, 'worker', None) is not None and self.worker.isRunning():
             return
-        SETTINGS.setValue('root', root); self.progress.setVisible(True); self.progress.setValue(0)
-        self.worker = LoadWorker(root); self.worker.progress.connect(self._progress); self.worker.done.connect(self._loaded); self.worker.failed.connect(self._failed); self.worker.start()
+        hist0 = self.history_folder()
+        if root and loader.card_parts(root)[1] and not (hist0 and os.path.abspath(root).startswith(os.path.abspath(hist0))): SETTINGS.setValue('root', root)
+        self.progress.setVisible(True); self.progress.setValue(0)
+        hist = self.history_folder(); extra = self._old_card_copies() if hist and not os.path.isdir(os.path.join(hist, 'DATALOG')) else []
+        self.worker = LoadWorker(root, hist, extra); self.worker.progress.connect(self._progress); self.worker.done.connect(self._loaded); self.worker.failed.connect(self._failed); self.worker.start()
     def _progress(self, i, n, msg):
         self.progress.setMaximum(max(n, 1)); self.progress.setValue(i); self.statusBar().showMessage(msg)
     def _failed(self, tb):
@@ -538,7 +549,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.data = data; self.nights = data['nights']; self.progress.setVisible(False)
         ident = data.get('identification') or {}
         self.device_label.setText(f"{ident.get('model', 'Unknown device')}  SN {ident.get('serial', '?')}\n{data['datalog']}")
-        self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {data['datalog']}")
+        kept = getattr(self.worker, 'copied', 0) if getattr(self, 'worker', None) else 0
+        src = "SleepScope's own copy (Card history)" if data.get('history') else data['datalog']
+        card_in = bool(loader.card_parts(data.get('card_root'))[1]) and not str(data.get('card_root', '')).startswith(str(self.history_folder() or '~~'))
+        self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {src}" + (f"; {kept} new or updated nights copied from the card" if kept else '') + ('' if card_in else '; card not in the PC, showing everything kept so far'))
         self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
         scoring.apply_str_settings(self.nights, self.night_view.str_data)
         self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.ask.set_profile_folder(self.phone_folder()); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
@@ -635,6 +649,23 @@ class MainWindow(QtWidgets.QMainWindow):
                  os.path.join(home, 'Dropbox'), os.path.join(home, 'Dropbox', 'SleepScope'), os.path.join(home, 'Dropbox', 'O2Ring'),
                  os.path.join(home, 'OneDrive'), os.path.join(home, 'Downloads'), os.path.join(home, 'Documents', 'SleepScope')]
         return [c for c in cands if c]
+    def history_folder(self):
+        """Where SleepScope keeps its own copy of every night: Sleepscope/Card history in Dropbox, else beside the user's settings."""
+        folder = self.phone_folder()
+        if folder: return os.path.join(folder, loader.HISTORY_NAME)
+        base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
+        return os.path.join(base, 'SleepScope', loader.HISTORY_NAME)
+
+    def _old_card_copies(self):
+        """Earlier hand-made card copies in the Sleepscope folder (for example 'Card archive Oct 20 to Nov 3'), merged in once."""
+        folder = self.phone_folder(); out = []
+        if not folder or not os.path.isdir(folder): return out
+        for name in os.listdir(folder):
+            p = os.path.join(folder, name)
+            if name in (loader.HISTORY_NAME, '_to_delete') or not os.path.isdir(p): continue
+            if loader.card_parts(p)[1]: out.append(p)
+        return out
+
     RING_ARCHIVE = 'Ring archive'
 
     def _ring_archive(self, ox_files):

@@ -189,6 +189,47 @@ def load_session(brp_path, want_waveforms=True):
     return s
 
 
+HISTORY_NAME = 'Card history'
+
+
+def card_parts(root):
+    """(card_root, datalog) for a card root, its DATALOG folder, or a copy of the date folders; (None, None) if no card data."""
+    if not root or not os.path.isdir(root): return None, None
+    root = root.rstrip('\\/')
+    if os.path.basename(root).upper() == 'DATALOG': return os.path.dirname(root), root
+    if os.path.isdir(os.path.join(root, 'DATALOG')): return root, os.path.join(root, 'DATALOG')
+    if glob.glob(os.path.join(root, '*', '*_BRP.edf')): return root, root
+    return None, None
+
+
+def sync_to_history(source, history, progress=None):
+    """Copy every night folder from a card (or an old card copy) into the history folder: new nights, and nights that grew
+    (a night still recording when the card was last read). Machine files (STR.edf, Identification) are taken when newer.
+    Nothing is ever deleted from the history. Returns the number of night folders copied."""
+    import shutil
+    card_root, datalog = card_parts(source)
+    if not datalog or os.path.abspath(datalog).startswith(os.path.abspath(history)): return 0
+    hdl = os.path.join(history, 'DATALOG'); os.makedirs(hdl, exist_ok=True); copied = 0
+    days = sorted(d for d in os.listdir(datalog) if d.isdigit() and os.path.isdir(os.path.join(datalog, d)))
+    for i, d in enumerate(days):
+        src, dst = os.path.join(datalog, d), os.path.join(hdl, d)
+        files = [f for f in os.listdir(src) if os.path.isfile(os.path.join(src, f))]
+        need = [f for f in files if not os.path.exists(os.path.join(dst, f)) or os.path.getsize(os.path.join(dst, f)) < os.path.getsize(os.path.join(src, f))]
+        if need:
+            os.makedirs(dst, exist_ok=True)
+            for f in need: shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
+            copied += 1
+        if progress and i % 5 == 0: progress(i, len(days), f'Keeping a copy of {d}')
+    for f in ('STR.edf', 'Identification.json', 'Identification.crc', 'Identification.tgt'):
+        sp, dp = os.path.join(card_root, f), os.path.join(history, f)
+        if os.path.isfile(sp) and (not os.path.exists(dp) or os.path.getmtime(sp) > os.path.getmtime(dp) + 1):
+            if f == 'STR.edf' and os.path.exists(dp):                 # keep the old machine summary too; a re-initialised card starts a new one
+                os.makedirs(os.path.join(history, 'STR older'), exist_ok=True)
+                shutil.copy2(dp, os.path.join(history, 'STR older', f"STR {dt.datetime.fromtimestamp(os.path.getmtime(dp)):%Y-%m-%d}.edf"))
+            shutil.copy2(sp, dp)
+    return copied
+
+
 def scan(root, min_session_s=300, progress=None):
     """root may be the card root (contains DATALOG) or the DATALOG folder itself."""
     root = root.rstrip('\\/')

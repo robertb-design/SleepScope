@@ -69,6 +69,9 @@ HELP = """
 <li>Look at the Synopsis oxygen section, the SpO2 and pulse panels in the Night tab, and the SpO2 columns in Statistics.</li>
 </ol>
 
+<h2>Your data is kept</h2>
+<p>Every time you open the card, SleepScope copies any new nights into <b>Sleepscope, Card history</b> and reads from that copy. Updates, a card left in the machine, or a card that gets wiped never take your history with them; with the card out, SleepScope opens everything it has kept. The phone keeps the last 120 nights it has been given, adding each new card zip to what it already holds.</p>
+
 <h2>Step 7. Add Apple Watch sleep (optional)</h2>
 <ol>
 <li>Wear the Watch to bed with Sleep tracking on (Watch app, Sleep). Breathing Disturbances fill in on their own on a Series 9, Ultra 2 or later.</li>
