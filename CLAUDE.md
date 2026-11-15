@@ -90,7 +90,8 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 - Card history (data is never lost to a card or an update): every load copies new or grown night folders from the card, plus
   any old hand-made card copies in the Sleepscope folder on first run, into `Sleepscope/Card history` (`loader.sync_to_history`;
   `MainWindow.history_folder`, falls back to %LOCALAPPDATA%/SleepScope), then reads from that copy; with the card out the app
-  opens the history. Older STR.edf files go to `Card history/STR older`. The phone merges each new card zip with the files it
+  opens the history. With no history yet it is seeded from `SleepScope card.zip` (`loader.sync_zip_to_history`), which also
+  tops it up on every start. The app opens on the newest night with data; empty date boxes default to today. Older STR.edf files go to `Card history/STR older`. The phone merges each new card zip with the files it
   already holds in IndexedDB (`addFiles`, newest `KEEP_NIGHTS` = 120 nights), and IndexedDB survives app updates.
 - Watch data reaches the phone as `health.json` inside `SleepScope card.zip` (desktop `apple_health.to_sync`, phone
   `AH.fromSync`), trimmed to the card's nights.

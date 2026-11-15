@@ -230,6 +230,24 @@ def sync_to_history(source, history, progress=None):
     return copied
 
 
+def sync_zip_to_history(zpath, history):
+    """Seed or top up the history from a SleepScope card.zip (the phone copy holds the last 45 nights and STR.edf):
+    night files that are missing or smaller in the history are extracted. Returns night folders touched."""
+    hdl = os.path.join(history, 'DATALOG'); touched = set()
+    with zipfile.ZipFile(zpath) as z:
+        for info in z.infolist():
+            parts = info.filename.split('/')
+            if len(parts) == 3 and parts[0] == 'DATALOG' and parts[1].isdigit() and parts[2]:
+                dst = os.path.join(hdl, parts[1], parts[2])
+                if not os.path.exists(dst) or os.path.getsize(dst) < info.file_size:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    with z.open(info) as src, open(dst, 'wb') as out: out.write(src.read())
+                    touched.add(parts[1])
+            elif len(parts) == 1 and parts[0] in ('STR.edf', 'Identification.json', 'Identification.crc') and not os.path.exists(os.path.join(history, parts[0])):
+                with z.open(info) as src, open(os.path.join(history, parts[0]), 'wb') as out: out.write(src.read())
+    return len(touched)
+
+
 def scan(root, min_session_s=300, progress=None):
     """root may be the card root (contains DATALOG) or the DATALOG folder itself."""
     root = root.rstrip('\\/')

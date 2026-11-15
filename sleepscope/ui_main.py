@@ -30,7 +30,9 @@ class LoadWorker(QtCore.QThread):
             if self.history:                                          # keep our own copy of every night, then read from it
                 os.makedirs(self.history, exist_ok=True)
                 for x in self.extra + [self.root]:
-                    try: self.copied += loader.sync_to_history(x, self.history, lambda i, n, m: self.progress.emit(i, n, m))
+                    try:
+                        if str(x).lower().endswith('.zip'): self.progress.emit(0, 1, 'Adding nights from SleepScope card.zip'); self.copied += loader.sync_zip_to_history(x, self.history)
+                        else: self.copied += loader.sync_to_history(x, self.history, lambda i, n, m: self.progress.emit(i, n, m))
                     except Exception: pass
                 if loader.card_parts(self.history)[1] and os.listdir(os.path.join(self.history, 'DATALOG')): src = self.history
             data = loader.scan(src, progress=lambda i, n, name: self.progress.emit(i, n, 'Reading ' + name))
@@ -314,8 +316,8 @@ class SynopsisView(QtWidgets.QWidget):
         super().__init__(); self.nights = []
         lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(6, 6, 6, 6)
         bar = QtWidgets.QHBoxLayout(); lay.addLayout(bar)
-        bar.addWidget(QtWidgets.QLabel('From')); self.d0 = QtWidgets.QDateEdit(calendarPopup=True); self.d0.setDisplayFormat('MMM d, yyyy'); bar.addWidget(self.d0)
-        bar.addWidget(QtWidgets.QLabel('to')); self.d1 = QtWidgets.QDateEdit(calendarPopup=True); self.d1.setDisplayFormat('MMM d, yyyy'); bar.addWidget(self.d1)
+        bar.addWidget(QtWidgets.QLabel('From')); self.d0 = QtWidgets.QDateEdit(QtCore.QDate.currentDate(), calendarPopup=True); self.d0.setDisplayFormat('MMM d, yyyy'); bar.addWidget(self.d0)
+        bar.addWidget(QtWidgets.QLabel('to')); self.d1 = QtWidgets.QDateEdit(QtCore.QDate.currentDate(), calendarPopup=True); self.d1.setDisplayFormat('MMM d, yyyy'); bar.addWidget(self.d1)
         for lab, days in (('Last night', 1), ('Last 7', 7), ('Last 14', 14), ('Last 30', 30), ('All', None)):
             b = QtWidgets.QPushButton(lab); b.clicked.connect(lambda _, d=days: self.quick(d)); bar.addWidget(b)
         bar.addSpacing(16); bar.addWidget(QtWidgets.QLabel('Diagnostic AHI (from your sleep study, optional)'))
@@ -504,9 +506,10 @@ class MainWindow(QtWidgets.QMainWindow):
         meth = QtWidgets.QTextBrowser(); meth.setHtml(METHODS); self.tabs.addTab(Page(meth, 'Methods', 'How every number is computed and how far to trust it.', '#1d4f91'), 'Methods')
         self.tabs.currentChanged.connect(self._tab_changed)
         self._refresh_home()
-        last = SETTINGS.value('root', ''); hist = self.history_folder()
-        if (last and os.path.isdir(last)) or (hist and os.path.isdir(os.path.join(hist, 'DATALOG'))):
-            QtCore.QTimer.singleShot(200, lambda: self.load(last if last and os.path.isdir(last) else hist))
+        last = SETTINGS.value('root', ''); hist = self.history_folder(); pf = self.phone_folder() or ''
+        seeds = hist and (os.path.isdir(os.path.join(hist, 'DATALOG')) or os.path.isfile(os.path.join(pf, 'SleepScope card.zip')) or self._old_card_copies())
+        if (last and loader.card_parts(last)[1]) or seeds:              # the card if it is in, otherwise everything kept so far
+            QtCore.QTimer.singleShot(200, lambda: self.load(last if last and loader.card_parts(last)[1] else hist))
         else:
             self.statusBar().showMessage('Open the SD card (the card root or its DATALOG folder), or click Load sample data to try the app with made-up data.')
 
@@ -536,10 +539,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def load(self, root):
         if getattr(self, 'worker', None) is not None and self.worker.isRunning():
             return
+        if root and not os.path.isdir(root): os.makedirs(root, exist_ok=True) if root == self.history_folder() else None
         hist0 = self.history_folder()
         if root and loader.card_parts(root)[1] and not (hist0 and os.path.abspath(root).startswith(os.path.abspath(hist0))): SETTINGS.setValue('root', root)
         self.progress.setVisible(True); self.progress.setValue(0)
         hist = self.history_folder(); extra = self._old_card_copies() if hist and not os.path.isdir(os.path.join(hist, 'DATALOG')) else []
+        cz = os.path.join(self.phone_folder() or '', 'SleepScope card.zip')
+        if hist and os.path.isfile(cz): extra.append(cz)              # the phone copy carries the last 45 nights; it seeds or tops up the history
         self.worker = LoadWorker(root, hist, extra); self.worker.progress.connect(self._progress); self.worker.done.connect(self._loaded); self.worker.failed.connect(self._failed); self.worker.start()
     def _progress(self, i, n, msg):
         self.progress.setMaximum(max(n, 1)); self.progress.setValue(i); self.statusBar().showMessage(msg)
@@ -555,7 +561,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {src}" + (f"; {kept} new or updated nights copied from the card" if kept else '') + ('' if card_in else '; card not in the PC, showing everything kept so far'))
         self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
         scoring.apply_str_settings(self.nights, self.night_view.str_data)
-        self._fill_nights(); self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.ask.set_profile_folder(self.phone_folder()); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
+        self._fill_nights()
+        last_i = max((i for i, n in enumerate(self.nights) if n.sessions), default=len(self.nights) - 1)
+        if last_i >= 0: self.night_table.selectRow(last_i)              # open on the newest night with data
+        self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.ask.set_profile_folder(self.phone_folder()); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
         if self.nights: self._auto_companions(data.get('root'))
         if self.nights: self._phone_sync()
         if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self._show_tab(self.synopsis)
