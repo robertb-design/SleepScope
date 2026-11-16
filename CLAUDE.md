@@ -108,6 +108,11 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
   their own Night explanation, excluded from the oxygen section of the Synopsis and compared with treated nights in its
   "Nights without the mask" section; Usage counts them as zero hours and leaves them out of shortest and longest.
 
+- 3D layers: a Show row of checkboxes (desktop `LAYERS` / `_add(item, layer)` / `_toggle_layer` in ui_landscape.py; phone
+  `LAND_LAYERS`, `#landlayers`, `Plotly.restyle` in app.js): Breathing, Leak, Pressure, Events, Ring SpO2, Ring pulse, Ring motion,
+  Watch stages, Watch heart rate. Switching hides or shows without redrawing (the camera stays), hidden layers cannot be clicked,
+  and the choice is remembered (QSettings `land_layer_<key>`, phone `ss_land_<key>`).
+
 - My notes (`notes.py`, `MyNotesView` in ui_notes.py, tab 'My notes'; phone: card on the Synopsis page, `SS.notes*` in engine.js):
   {id, date (the night), text, change, updated, deleted}. Stored in QSettings `sleep_notes` and `Sleep notes.json` in the
   Sleepscope folder; every `Sleep notes*.json` there is merged on load (newest edit per id wins, deletes are tombstones), so a

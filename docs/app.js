@@ -301,7 +301,7 @@ function drawLandscape() {
       const stageCol = { Deep: 0.1, Core: 0.35, Asleep: 0.35, REM: 0.6, Awake: 0.85, InBed: 1.0 }; const rib = new Array(W).fill(null); const rc = new Array(W).fill(0);
       for (const r of n.apple.stages) { const b0 = Math.max(0, Math.floor((r.s - base) / 1000 / LB.bin)), b1 = Math.min(W, Math.ceil((r.e - base) / 1000 / LB.bin)); for (let b = b0; b < b1; b++) { if (r.stage === 'InBed' && rib[b] !== null) continue; rib[b] = 0.25 * LB.Z; rc[b] = stageCol[r.stage] ?? 0.35; } }
       traces.push({ type: 'surface', x: xs, y: [y0 - sw / 2 - 1.9, y0 - sw / 2 - 1.1, y0 - sw / 2 - 0.3], z: [rib, rib, rib], surfacecolor: [rc, rc, rc], colorscale: [[0, '#0f6e4f'], [0.3, '#2a78d6'], [0.5, '#2a78d6'], [0.7, '#6250d6'], [0.9, '#eb6834'], [1, '#d9d8d3']], cmin: 0, cmax: 1, showscale: false, hoverinfo: 'none', opacity: 0.95, meta: { kind: 'stage', k } }); landStages[k] = rc.map((v, i) => rib[i] === null ? '' : ({ 0.1: 'Deep', 0.35: 'Core', 0.6: 'REM', 0.85: 'Awake', 1.0: 'InBed' }[v] || 'Asleep'));
-      if (n.apple.hr.length) { const hx = [], hz = []; for (const [t, v] of n.apple.hr) { const b = (t - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; hx.push(b * 0.25); hz.push(LB.Z * (1.6 + (v - 40) / 80)); } traces.push({ type: 'scatter3d', mode: 'lines', x: hx, y: hx.map(() => y0 - sw / 2 - 1.1), z: hz, line: { color: C.red, width: 2 }, hoverinfo: 'skip' }); }
+      if (n.apple.hr.length) { const hx = [], hz = []; for (const [t, v] of n.apple.hr) { const b = (t - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; hx.push(b * 0.25); hz.push(LB.Z * (1.6 + (v - 40) / 80)); } traces.push({ type: 'scatter3d', mode: 'lines', x: hx, y: hx.map(() => y0 - sw / 2 - 1.1), z: hz, line: { color: C.red, width: 2 }, hoverinfo: 'skip', meta: { kind: 'whr', k } }); }
     }
     for (const s of n.sessions) for (const e of s.machine) { const g = pil[e.label]; if (!g) continue; const b = (e.start.getTime() - base) / 1000 / LB.bin; if (b < 0 || b >= W) continue; const x = b * 0.25, z0 = Math.max(0, zz[Math.floor(b)]); const h = LB.Z * (/Apnea/.test(e.label) ? 0.9 : 0.6); g.x.push(x, x, null); g.y.push(y0, y0, null); g.z.push(z0, z0 + h, null); (g.sz ||= []).push(0, 4, 0); const bi = Math.floor(b); (g.ev ||= []).push({ night: SS.label(n.date), time: hm(e.start), label: e.label, dur: e.duration, press: Number.isNaN(pr[bi]) ? null : pr[bi], leak: Number.isNaN(lk[bi]) ? null : lk[bi], at_ceiling: !Number.isNaN(pr[bi]) && n.stats.mode === 'AutoSet' && pr[bi] >= (n.stats.press_max ?? 99) - 0.1 }); }
   });
@@ -313,9 +313,20 @@ function drawLandscape() {
       zaxis: { visible: false, range: [-2, 2.6 * LB.Z], showspikes: false }, aspectmode: 'manual', aspectratio: { x: 2.2, y: Math.max(0.6, 0.11 * N), z: 0.45 }, camera: cams(N)[landCam], dragmode: 'orbit' } };
   $('landhl').innerHTML = 'SETTINGS &nbsp; ' + SS.settingsText(SS.settingsSummary(sel, strData));
   landGrids.length = N; landStages.length = N; $('landpop').style.display = 'none';
+  for (const t of traces) { const L = landLayerOf(t); if (L && !landOn[L]) t.visible = false; }
   Plotly.react('ch-land', traces, layout, { displayModeBar: false, responsive: true }).then(gd => { if (!gd._ssPick) { gd._ssPick = true; gd.on('plotly_click', landClick); } });
 }
 const landGrids = [], landStages = [];
+// one checkbox per data type (same names and order as the desktop LAYERS); a switch only hides or shows, the view stays put
+const LAND_LAYERS = [['terrain', 'Breathing', ['terrain', 'floor', 'summary']], ['water', 'Leak', ['water']], ['pressure', 'Pressure', ['pressure']], ['event', 'Events', ['event']],
+  ['spo2', 'Ring SpO2', ['spo2']], ['pulse', 'Ring pulse', ['pulse']], ['motion', 'Ring motion', ['motion']], ['stage', 'Watch stages', ['stage']], ['watch', 'Watch heart rate', ['whr']]];
+const LAND_KIND = Object.fromEntries(LAND_LAYERS.flatMap(([key, , kinds]) => kinds.map(k => [k, key])));
+const landOn = Object.fromEntries(LAND_LAYERS.map(([key]) => [key, store.get('land_' + key, true)]));
+const landLayerOf = (t) => LAND_KIND[t.meta && t.meta.kind];
+$('landlayers').innerHTML = LAND_LAYERS.map(([key, lab]) => `<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:14px;white-space:nowrap"><input type="checkbox" data-layer="${key}" style="width:auto;margin:0" ${landOn[key] ? 'checked' : ''}>${lab}</label>`).join('');
+$('landlayers').onchange = (e) => { const key = e.target.dataset.layer; if (!key) return; landOn[key] = e.target.checked; store.set('land_' + key, e.target.checked);
+  const gd = $('ch-land'); if (!gd.data) return; const idx = [], vis = []; gd.data.forEach((t, i) => { if (landLayerOf(t) === key) { idx.push(i); vis.push(e.target.checked); } });
+  if (idx.length) Plotly.restyle(gd, { visible: vis }, idx); if (!e.target.checked) $('landpop').style.display = 'none'; };
 function hm(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
 function landClick(ev) {
   const p = ev.points && ev.points[0]; if (!p) return; const meta = p.data.meta || {}; let html = '';
