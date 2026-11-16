@@ -104,6 +104,14 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
   their own Night explanation, excluded from the oxygen section of the Synopsis and compared with treated nights in its
   "Nights without the mask" section; Usage counts them as zero hours and leaves them out of shortest and longest.
 
+- My notes (`notes.py`, `MyNotesView` in ui_notes.py, tab 'My notes'; phone: card on the Synopsis page, `SS.notes*` in engine.js):
+  {id, date (the night), text, change, updated, deleted}. Stored in QSettings `sleep_notes` and `Sleep notes.json` in the
+  Sleepscope folder; every `Sleep notes*.json` there is merged on load (newest edit per id wins, deletes are tombstones), so a
+  file the phone shares with Send to PC comes back in. Packed as `notes.json` in the card zip; phone keeps them in
+  localStorage `ss_notes`. Used by: the Synopsis "Your notes" section (a change note compares up to 14 treated nights before
+  with up to 14 from that night on: hours, AHI, leak 95th, ODI, SpO2, Watch BD), Claude's context ("=== My notes ===" plus the
+  before and after lines; the system prompt tells Claude to use them), the "What Claude sees" summary, and the top of each Night explanation.
+
 ## Scoring rules that matter
 - AHI (machine) comes from the machine. The app's own recount is shown beside it, never instead of it.
 - App hypopneas count only when the ring confirms them (3 point SpO2 drop from the 2 min pre-event median,
