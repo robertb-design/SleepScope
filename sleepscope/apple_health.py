@@ -230,7 +230,8 @@ def attach(data, nights):
             hr_n, sp_n = hr, sp
         # share of Watch sleep that happened with the mask on: overlap of asleep stages with the machine sessions
         cover = np.nan
-        if stages and asleep > 0:
+        if getattr(nt, 'no_mask', False) and stages and asleep > 0: cover = 0.0      # the mask was not worn this night
+        elif stages and asleep > 0:
             if nt.sessions:
                 ses = [(s.start, s.end) for s in nt.sessions]
                 ov = 0.0
@@ -257,6 +258,24 @@ def attach(data, nights):
         _refresh_stats(nt)
         count += 1
     return count
+
+
+def no_mask_watch_nights(data, nights):
+    """Watch sleep nights with no CPAP and no ring night, inside the span of the loaded nights (or later), become no-mask
+    nights. A stand-in session spans the Watch sleep window so the Night tab can draw it. Returns the new nights."""
+    from .loader import Night, Session, night_date
+    if not nights or not data or not data.get('sleep'): return []
+    have = {n.date for n in nights}; lo = min(have); out = {}
+    for st, en, stage, src in data['sleep']:
+        if stage not in ('Core', 'Deep', 'REM', 'Asleep', 'Awake'): continue
+        d = night_date(st)
+        if d < lo or d in have: continue
+        a, b = out.get(d, (st, en)); out[d] = (min(a, st), max(b, en))
+    new = []
+    for d, (a, b) in sorted(out.items()):
+        if (b - a).total_seconds() < 3600: continue
+        new.append(Night(d, [Session(start=a, duration=(b - a).total_seconds(), folder='', stem='WATCH')], no_mask=True))
+    return new
 
 
 def watch_fields(nt):

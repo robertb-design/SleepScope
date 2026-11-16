@@ -219,7 +219,8 @@ class OverviewView(QtWidgets.QWidget):
         # usage
         p = plot('Usage (hours)', 'Usage (hours)', 'h'); bars(p, g('hours'), C['blue']); p.setYRange(0, np.nanmax(g('hours')) * 1.3 + 0.5); p.addLine(y=4, pen=pg.mkPen(C['text2'], style=QtCore.Qt.DashLine))
         for i, v in enumerate(g('hours')):
-            t = pg.TextItem(f'{v:.1f}', color=C['text2'], anchor=(0.5, 1)); t.setPos(i, v); p.addItem(t)
+            nm_ = S[i].get('no_mask')
+            t = pg.TextItem('no mask' if nm_ else f'{v:.1f}', color=C['red'] if nm_ else C['text2'], anchor=(0.5, 1)); t.setPos(i, v); p.addItem(t)
         # AHI
         p = plot('AHI: machine vs app', 'AHI: machine (blue), app recheck (orange), app RDI (violet line); dashed = 5', '/h', 'AHI')
         bars(p, g('AHI'), C['blue'], 0.28, -0.15); bars(p, g('app_AHI'), C['orange'], 0.28, 0.15)
@@ -574,7 +575,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = []
         for n in self.nights:
             s = n.stats
-            rows.append([n.label, f"{s['hours']:.2f}", s.get('setting') or scoring.pressure_label(s), scoring.fmt('AHI', s['AHI']), scoring.fmt('app_AHI', s['app_AHI']) or ('card out' if s.get('summary_only') else ''), scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
+            rows.append([n.label, f"{s['hours']:.2f}", s.get('setting') or ('' if s.get('no_mask') else scoring.pressure_label(s)), scoring.fmt('AHI', s['AHI']), scoring.fmt('app_AHI', s['app_AHI']) or ('card out' if s.get('summary_only') else 'no mask' if s.get('no_mask') else ''), scoring.fmt('leak_95', s['leak_95']), scoring.fmt('press_95', s['press_95'])])
         self.night_table.fill(rows)
     def _fill_stats(self):
         if hasattr(self, 'ask'): self.ask.refresh_context()          # ring and Watch attach after the first fill
@@ -725,11 +726,17 @@ class MainWindow(QtWidgets.QMainWindow):
         try: ox_files = self._ring_archive(ox_files)
         except Exception: pass
         self.ring_files = ox_files
-        filled = 0; used = 0
+        filled = 0; used = 0; unmatched = []
+        self.nights = [n for n in self.nights if not getattr(n, 'no_mask', False)]     # rebuilt below on every load
         for p in ox_files:
-            try: n = loader.import_oximeter_csv(p, self.nights)
-            except Exception: n = 0
+            try:
+                rec = loader.import_oximeter_csv(p, None); n = loader._attach_oximetry(*rec, self.nights) if rec else 0
+            except Exception: rec, n = None, 0
             if n: filled += n; used += 1
+            elif rec: unmatched.append(rec)
+        extra = loader.no_mask_ring_nights(unmatched, self.nights) if unmatched else []     # nights the mask was not worn
+        if extra:
+            used += len(extra); self.nights = sorted(self.nights + extra, key=lambda n: n.date)
         # Apple Health: Watch nights.json is the running record; the newest export (by the date inside it) is read once and merged in
         folder = self.phone_folder(); store, meta = (apple_health.load_store(folder) if folder else (None, {}))
         exports = [p for p in health_files if not p.lower().endswith(('.txt', '.csv'))]
@@ -741,6 +748,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.health_worker = HealthWorker(newest, since); self.health_worker.done.connect(lambda p, d, f=folder, s=store: self._health_read(p, d, f, s)); self.health_worker.start()
         hmatched = 0
         if store:
+            wx = apple_health.no_mask_watch_nights(store, self.nights)
+            if wx: self.nights = sorted(self.nights + wx, key=lambda n: n.date); extra = (extra or []) + wx
             self.apple_data = store; hmatched = apple_health.attach(store, self.nights)
         else:
             for p in health_files:
@@ -750,7 +759,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     if hmatched: self.apple_data = data
                 except Exception:
                     pass
-        self._companions_done(filled, used, hmatched)
+        self._companions_done(filled, used, hmatched, refresh=bool(extra))
 
     def _health_read(self, path, data, folder, store):
         if isinstance(data, Exception):
@@ -759,6 +768,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if folder:
             try: apple_health.save_store(folder, merged, {'export_date': loader.health_export_date(path), 'source': os.path.basename(os.path.dirname(path)) + '/' + os.path.basename(path)})
             except OSError: pass
+        wx = apple_health.no_mask_watch_nights(merged, self.nights)
+        if wx: self.nights = sorted(self.nights + wx, key=lambda n: n.date)
         self.apple_data = merged; n = apple_health.attach(merged, self.nights)
         self._companions_done(0, 0, n, refresh=True)
         if folder and self.phone_folder(): self._phone_sync()
@@ -766,10 +777,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _companions_done(self, filled, used, hmatched, refresh=False):
         if filled or hmatched or refresh:
             for nt in self.nights: scoring.night_stats(nt)
+            cur = getattr(self, 'current', None); self._fill_nights()
+            if cur in self.nights: self.night_table.selectRow(self.nights.index(cur))
+            self.ask.set_nights(self.nights)
             self._fill_stats(); self.overview.set_nights(self.nights); self.synopsis.set_nights(self.nights); self.landscape.set_nights(self.nights); self._refresh_home()
             parts = []
             if filled: parts.append(f'ring: {used} recording{"s" if used != 1 else ""}, oxygen on {filled} session{"s" if filled != 1 else ""}')
             if hmatched: parts.append(f'Apple Watch: {hmatched} night{"s" if hmatched != 1 else ""}')
+            nm = sum(1 for n in self.nights if getattr(n, 'no_mask', False))
+            if nm: parts.append(f'{nm} night{"s" if nm != 1 else ""} without the mask (ring or Watch only)')
             self.statusBar().showMessage(f'{len(self.nights)} nights loaded. ' + '; '.join(parts) + '.')
 
     @staticmethod

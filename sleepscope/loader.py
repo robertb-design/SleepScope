@@ -90,8 +90,11 @@ class Night:
     apple: dict | None = None
     summary_only: bool = False          # card was out: only the machine's daily summary (STR.edf) exists
     str_summary: dict | None = None
+    no_mask: bool = False               # no CPAP this night: ring and/or Watch only; sessions are stand-ins spanning the recording
     @property
-    def hours(self): return sum(s.duration for s in self.sessions) / 3600.0
+    def hours(self): return 0.0 if self.no_mask else sum(s.duration for s in self.sessions) / 3600.0
+    @property
+    def span_hours(self): return sum(s.duration for s in self.sessions) / 3600.0
     @property
     def label(self): return self.date.strftime('%a %m/%d')
 
@@ -432,6 +435,25 @@ def find_companion_files(folders, max_depth=6):
 
 
 # ----------------------------------------------------------------------------- nights the card missed: machine summary from STR.edf
+def no_mask_ring_nights(recordings, nights):
+    """Ring recordings that matched no CPAP session become nights of their own, marked no_mask, when the machine has
+    nothing for that night (a night the mask could not be worn). A stand-in session spans each recording so the oxygen,
+    pulse and motion code works unchanged. Returns the new nights, already carrying their ring data."""
+    have = {n.date: n for n in nights}; new = {}
+    for rec in recordings:
+        ts = rec[0]
+        if ts is None or len(ts) < 600: continue                         # under 10 minutes is not a night
+        start = dt.datetime.fromtimestamp(float(ts[0])); d = night_date(start)
+        old = have.get(d)
+        if old is not None and not getattr(old, 'no_mask', False): continue   # the machine has this night (card out nights included)
+        nt = new.get(d) or old
+        if nt is None: nt = new[d] = Night(d, [], no_mask=True)
+        nt.sessions.append(Session(start=start, duration=float(ts[-1] - ts[0]) + 1, folder='', stem='RING'))
+        nt.sessions.sort(key=lambda x: x.start)
+        _attach_oximetry(*rec, [nt])
+    return list(new.values())
+
+
 def health_export_date(path):
     """The ExportDate Apple writes near the top of export.xml (zip member or file), else the file time. Used to pick the newest export."""
     import re as _re

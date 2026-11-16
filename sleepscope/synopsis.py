@@ -54,7 +54,8 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
     leak95 = _mean(sel, 'leak_95'); leak_pct = _wmean(sel, 'leak_pct_large'); leak_nights = [n for n in sel if n.stats['leak_pct_large'] > 5]
     fl95 = _mean(sel, 'flowlim_95'); fl_min = _mean(sel, 'flowlim_minutes')
     p95 = _mean(sel, 'press_95'); pmed = _mean(sel, 'press_med'); at_max = _mean(sel, 'press_at_max_pct')
-    has_ox = any(np.isfinite(n.stats.get('spo2_mean', np.nan)) for n in sel)
+    nomask = [n for n in sel if getattr(n, 'no_mask', False)]
+    has_ox = any(np.isfinite(n.stats.get('spo2_mean', np.nan)) for n in sel if not getattr(n, 'no_mask', False))
     unflag = sum(n.stats['app_unflagged'] for n in sel); periodic = sum(n.stats['periodic_windows'] for n in sel)
     rr = _mean(sel, 'rr_med'); tv = _mean(sel, 'tv_med'); mv = _mean(sel, 'mv_med')
     rng = f"{start.strftime('%b %d')} to {end.strftime('%b %d, %Y')}"
@@ -161,7 +162,7 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
     # ---- oximetry
     h2('Oxygen')
     if has_ox:
-        ox = [n for n in sel if np.isfinite(n.stats.get('spo2_mean', np.nan))]
+        ox = [n for n in sel if np.isfinite(n.stats.get('spo2_mean', np.nan)) and not getattr(n, 'no_mask', False)]
         mean_sp = _wmean(ox, 'spo2_mean'); min_sp = min(n.stats['spo2_min'] for n in ox); lt90 = _wmean(ox, 'spo2_pct_lt90'); odi = _wmean(ox, 'ODI')
         min_lt88 = sum(n.stats['spo2_pct_lt88'] * n.hours * 60 / 100 for n in ox if 'spo2_pct_lt88' in n.stats) if all('spo2_pct_lt88' in n.stats for n in ox) else None
         p(f'Oximetry on {len(ox)} night{"s" if len(ox) > 1 else ""}: mean SpO2 {mean_sp:.1f}%, lowest reading {min_sp:.0f}%, {lt90:.1f}% of the night below 90%, 3% desaturation index {odi:.1f} per hour.')
@@ -177,6 +178,29 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
         p(f'Pulse averaged {_wmean(ox, "pulse_mean"):.0f} bpm overnight. A steady overnight pulse with no sawtooth pattern is the heart not being repeatedly startled by events.')
     else:
         p('No oximeter data in this range. AHI counts the events; it does not say what they did to your oxygen. Attach the ring and this section fills in with mean and minimum SpO2, time under 90%, and the desaturation index, which together are the clearest measure of whether the therapy is protecting your heart and brain.')
+
+    # ---- nights the mask was not worn: ring and Watch alone, set against the treated nights
+    if nomask:
+        h2('Nights without the mask')
+        lab = ', '.join(f'{n.date:%a %m/%d}' for n in nomask)
+        p(f'{len(nomask)} night{"s" if len(nomask) > 1 else ""} with no CPAP ({lab}). The machine recorded nothing, so these come from the ring and Watch alone. '
+          'They are the closest thing to an untreated baseline you have, and they count as zero hours of therapy in Usage.')
+        def mean(ns, k):
+            v = [n.stats.get(k, np.nan) for n in ns]; v = [x for x in v if isinstance(x, (int, float)) and np.isfinite(x)]
+            return float(np.mean(v)) if v else np.nan
+        treated = [n for n in sel if not getattr(n, 'no_mask', False) and not getattr(n, 'summary_only', False)]
+        rows = []
+        for k, name, fmt in (('ODI', 'ODI, oxygen dips per hour', '{:.1f}'), ('spo2_mean', 'mean SpO2 %', '{:.1f}'), ('spo2_min', 'lowest SpO2 %', '{:.0f}'),
+                             ('spo2_pct_lt90', '% of the night under 90', '{:.1f}'), ('pulse_mean', 'mean pulse', '{:.0f}'), ('w_bd', 'Watch Breathing Disturbances', '{:.1f}')):
+            a, b = mean(nomask, k), mean(treated, k)
+            if np.isfinite(a): rows.append(f"{name}: {fmt.format(a)} without the mask" + (f" against {fmt.format(b)} with it" if np.isfinite(b) else ''))
+        if rows: p('; '.join(rows) + '.')
+        odi_a, odi_b = mean(nomask, 'ODI'), mean(treated, 'ODI')
+        if np.isfinite(odi_a) and np.isfinite(odi_b):
+            if odi_a >= max(5, 2 * odi_b): p('Without the mask the oxygen dips come back. That is what the therapy is preventing, and why a night off it matters.')
+            elif odi_a < 5: p('Even without the mask the ring found few oxygen dips on these nights. One or two nights do not make a pattern; the machine AHI on treated nights remains the reference.')
+        elif not any(np.isfinite(n.stats.get('spo2_mean', np.nan)) for n in nomask):
+            p('No ring data on these nights. Wear the ring even when the mask cannot be worn; those nights show what untreated sleep does to your oxygen.')
 
     # ---- apple health
     ah = [n for n in sel if getattr(n, 'apple', None)]

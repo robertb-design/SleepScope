@@ -60,10 +60,14 @@ def overview(nights, items=None) -> str:
     fl_at_top = bool(top['minutes']) and _sc.rera_at_ceiling(top, rest)
     out = []
     # ---- usage
-    h = g('hours'); low = [L[i] for i in range(N) if h[i] < 4]; split = [L[i] for i in range(N) if S[i]['sessions'] > 1]
+    h = g('hours'); nm = [L[i] for i in range(N) if S[i].get('no_mask')]
+    low = [L[i] for i in range(N) if h[i] < 4 and not S[i].get('no_mask')]; split = [L[i] for i in range(N) if S[i]['sessions'] > 1 and not S[i].get('no_mask')]
     found, imp = [], []
+    if nm: found.append(f"No mask on {which(nm)}; those count as zero hours.")
+    if nm: imp.append("On nights the mask cannot be worn, keep the ring and Watch on: they show what an untreated night costs, in the Synopsis under Nights without the mask.")
     if low: found.append(f"{len(low)} of {N} nights were under 4 hours ({', '.join(low[:6])}{', ...' if len(low) > 6 else ''}).")
-    if N > 1: found.append(f"Shortest {h.min():.1f} h ({L[int(h.argmin())]}), longest {h.max():.1f} h ({L[int(h.argmax())]}).")
+    ht = np.array([np.nan if S[i].get('no_mask') else h[i] for i in range(N)], dtype=float)
+    if np.isfinite(ht).sum() > 1: found.append(f"Shortest {np.nanmin(ht):.1f} h ({L[int(np.nanargmin(ht))]}), longest {np.nanmax(ht):.1f} h ({L[int(np.nanargmax(ht))]}).")
     if split: found.append(f"Mask came off and went back on mid-night on {len(split)} night{'s' if len(split) > 1 else ''}.")
     if h.mean() < 6: imp.append("Hours are the single biggest lever. Aim for the mask on at lights-out and left on until you get up; every untreated hour is an hour of the original apnea.")
     if split: imp.append("For the mid-night gaps, note what woke you (leak noise, dry mouth, pressure, bathroom). Dry mouth with the mask off points to mouth breathing: a chin strap or mouth tape, or a full-face mask. Pressure discomfort on falling asleep: ask about EPR or a longer ramp.")
@@ -81,7 +85,7 @@ def overview(nights, items=None) -> str:
     else: imp.append("Nothing to fix here; the treated hours are controlled. If you feel unrefreshed anyway, the flow limitation and leak charts are where to look, not this one.")
     out.append(_ob('AHI: machine vs app', "Breathing events per hour of use. Blue is what the machine scored (apneas plus hypopneas). Orange is the app re-scoring from the raw airflow, which counts every dip of 30% or more and so is always higher; read it as a ceiling. Violet is the app's RDI, which adds flow-limited runs ending in a recovery breath. Under 5 is normal; 5 to 15 mild; over 15 needs attention.", found, imp))
     # ---- event mix
-    OA, CA, H = g('OA'), g('CA'), g('H'); tot = OA.sum() + CA.sum() + H.sum()
+    OA, CA, H = np.nan_to_num(g('OA')), np.nan_to_num(g('CA')), np.nan_to_num(g('H')); tot = OA.sum() + CA.sum() + H.sum()
     found, imp = [], []
     if tot: found.append(f"Over the range: {int(OA.sum())} obstructive, {int(CA.sum())} central, {int(H.sum())} hypopneas.")
     cai = g('CAI'); cen = [L[i] for i in range(N) if cai[i] > 5 and CA[i] > OA[i] + H[i]]
@@ -164,7 +168,7 @@ def overview(nights, items=None) -> str:
         if hi_pct: found.append(f"At the ceiling more than 20% of the time on {which(hi_pct)}.")
         per = g('periodic_windows'); pw = [L[i] for i in range(N) if per[i] >= 3]
         if pw: found.append(f"Several periodic-breathing windows on {', '.join(pw)}.")
-        elif per.sum() == 0: found.append("No periodic (Cheyne-Stokes) breathing pattern found.")
+        elif np.nansum(per) == 0: found.append("No periodic (Cheyne-Stokes) breathing pattern found.")
         imp.append("Add an oximeter to replace this panel with oxygen data; AHI counts events but cannot say what they did to your oxygen." + (" If periodic windows cluster on one night, open it and look for a slow wax-and-wane in the ventilation trace; that pattern belongs in front of a physician." if pw else ''))
         out.append(_ob('Time at maximum pressure, periodic breathing', "Blue bars: the share of each night the machine spent pinned at its ceiling (fixed-pressure nights show 100% by definition). Magenta: five-minute windows where breathing waxed and waned on a 30 to 90 second cycle, the Cheyne-Stokes pattern.", found, imp))
     fp, ip = pressure_reading(nights)
@@ -178,6 +182,23 @@ def overview_items(nights):
     items = []; overview(nights, items); return items
 
 def night(nt) -> str:
+    if getattr(nt, 'no_mask', False):
+        st = nt.stats; g = lambda k: st.get(k, float('nan')); out = []
+        found, imp = [], []
+        if np.isfinite(g('spo2_mean')):
+            found.append(f"Ring for {g('ring_hours'):.1f} h: mean SpO2 {g('spo2_mean'):.1f}%, lowest {g('spo2_min'):.0f}%, {g('spo2_pct_lt90'):.1f}% of the time under 90%, "
+                         f"ODI {g('ODI'):.1f} oxygen dips per hour, pulse {g('pulse_mean'):.0f} bpm.")
+            if g('ODI') >= 15 or g('spo2_pct_lt90') > 5: imp.append('Untreated, the oxygen dips are frequent. This is what the mask is preventing; a night without it is not free.')
+            elif g('ODI') >= 5: imp.append('A mild number of oxygen dips without the mask. Compare with your treated nights in the Synopsis.')
+            else: imp.append('Few oxygen dips even without the mask this night. One night is not a pattern; the treated nights remain the reference.')
+        else:
+            found.append('No ring data this night.'); imp.append('Wear the ring even when the mask cannot be worn; it is the only measure of what an untreated night does to your oxygen.')
+        out.append(_block('No mask this night', 'The machine recorded nothing, so this night comes from the ring and the Watch alone. It counts as zero hours of therapy.', found, imp))
+        a = getattr(nt, 'apple', None)
+        if a and a.get('stages'):
+            f2 = [f"Watch: asleep {a['asleep_h']:.1f} h, deep plus REM {a['deep_min'] + a['rem_min']:.0f} min" + (f", Breathing Disturbances {a['bd']:.1f} per hour" if np.isfinite(a.get('bd', np.nan)) else '') + '.']
+            out.append(_block('Apple Watch', 'Sleep stages and breathing from the Watch.', f2, ['Breathing Disturbances on nights without the mask, set against treated nights, show what the therapy changes.']))
+        return "<div style='font-size:12.5px;line-height:1.4'>" + ''.join(out) + "</div>"
     if getattr(nt, 'summary_only', False):
         st = nt.stats
         return ('<p><b>Card was out this night.</b> Only the machine\'s own daily summary exists: '

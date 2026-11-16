@@ -320,7 +320,7 @@ def validation_summary(nights):
 
 
 def night_stats(nt: Night) -> dict:
-    ss = nt.sessions; hrs = nt.hours
+    ss = nt.sessions; hrs = nt.hours or (getattr(nt, 'span_hours', 0) if getattr(nt, 'no_mask', False) else 0)
     def cat(key, scale=1.0):
         arr = [s.ch[key] for s in ss if key in s.ch]
         return np.concatenate(arr) * scale if arr else np.array([])
@@ -389,7 +389,15 @@ def night_stats(nt: Night) -> dict:
                  leak_pct_large=np.nan, press_med=sm['press_med'], press_95=sm['press_95'], press_max=sm['press_max'], press_min=np.nan, press_floor=np.nan,
                  press_at_max_pct=np.nan, rr_med=sm['rr_med'], tv_med=sm['tv_med'], mv_med=sm['mv_med'], flowlim_95=np.nan, flowlim_minutes=np.nan,
                  periodic_windows=np.nan, summary_only=True)
-    d['setting'] = getattr(nt, 'str_setting', None) or ('' if getattr(nt, 'summary_only', False) else pressure_label(d))
+    if getattr(nt, 'no_mask', False):
+        # no CPAP this night: machine numbers do not exist, so they are blank, not zero; oxygen, pulse and Watch stay
+        blank = ('AHI', 'OA', 'CA', 'H', 'UA', 'CAI', 'arousals', 'app_AHI', 'app_RDI', 'app_apneas', 'app_hypopneas', 'app_unflagged',
+                 'app_flowlim_runs', 'app_RERA_like', 'app_leak_excluded', 'leak_med', 'leak_95', 'leak_max', 'leak_pct_large', 'press_med',
+                 'press_95', 'press_max', 'press_min', 'press_floor', 'press_at_max_pct', 'rr_med', 'tv_med', 'mv_med', 'flowlim_95',
+                 'flowlim_minutes', 'periodic_windows', 'epr_med')
+        d.update({k: np.nan for k in blank if k in d}); d.update(mode='No mask', hours=0.0, no_mask=True, app_hyp_conf_txt='',
+                                                            ring_hours=getattr(nt, 'span_hours', 0.0))
+    d['setting'] = getattr(nt, 'str_setting', None) or ('' if (getattr(nt, 'summary_only', False) or getattr(nt, 'no_mask', False)) else pressure_label(d))
     from .apple_health import watch_fields
     d.update(watch_fields(nt))
     nt.stats = d

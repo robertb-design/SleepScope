@@ -77,7 +77,8 @@ const AH = (() => {
         // share of Watch sleep with the mask on: overlap of asleep stages with the machine sessions
         let cover = NaN;
         if (stages.length && asleep > 0) {
-          if (nt.sessions.length) { let ov = 0; for (const r of stages) { if (!ASLEEP.has(r.stage)) continue; for (const x of nt.sessions) { const a0 = x.start.getTime(), a1 = a0 + x.duration * 1000; const lo = Math.max(r.s, a0), hi = Math.min(r.e, a1); if (hi > lo) ov += (hi - lo) / 60000; } } cover = Math.min(100, 100 * ov / asleep); }
+          if (nt.noMask) cover = 0;
+          else if (nt.sessions.length) { let ov = 0; for (const r of stages) { if (!ASLEEP.has(r.stage)) continue; for (const x of nt.sessions) { const a0 = x.start.getTime(), a1 = a0 + x.duration * 1000; const lo = Math.max(r.s, a0), hi = Math.min(r.e, a1); if (hi > lo) ov += (hi - lo) / 60000; } } cover = Math.min(100, 100 * ov / asleep); }
           else if (nt.hours) cover = Math.min(100, 100 * nt.hours * 60 / asleep);
         }
         const bd = d.bd.map(x => x[1]);
@@ -90,6 +91,16 @@ const AH = (() => {
       if (nt.stats) Object.assign(nt.stats, watchFields(nt));
     }
     return count;
+  }
+  /** Watch sleep nights with no CPAP and no ring night, from the first loaded night on, become no-mask nights (port of
+   *  apple_health.no_mask_watch_nights). A stand-in session spans the Watch sleep window so the Night page can draw it. */
+  function noMaskWatchNights(data, nights) {
+    if (!nights.length || !data || !data.sleep || !data.sleep.length) return [];
+    const have = new Set(nights.map(n => n.date)), lo = nights[0].date, win = {};
+    for (const r of data.sleep) { if (!['Core', 'Deep', 'REM', 'Asleep', 'Awake'].includes(r.stage)) continue; const k = nightKey(new Date(r.s)); if (k < lo || have.has(k)) continue;
+      const w = win[k] || [r.s, r.e]; win[k] = [Math.min(w[0], r.s), Math.max(w[1], r.e)]; }
+    return Object.keys(win).sort().filter(k => win[k][1] - win[k][0] >= 3600e3).map(k => { const [a, b] = win[k]; const d = (b - a) / 1000;
+      return { date: k, sessions: [{ start: new Date(a), duration: d, ch: {}, machine: [], app: [], watch: true }], hours: 0, span_hours: d / 3600, noMask: true }; });
   }
   /** The Watch columns for the nights table (NaN when there is no Watch data for the night). Same keys as the desktop. */
   function watchFields(nt) {
@@ -105,5 +116,5 @@ const AH = (() => {
   }
   /** Compact form for IndexedDB persistence. */
   const pack = (data) => JSON.stringify(data); const unpack = (s) => { const d = JSON.parse(s); d.bd ||= []; return d; };
-  return { readExport, readShortcutCsv, attach, watchFields, fromSync, pack, unpack };
+  return { readExport, readShortcutCsv, attach, noMaskWatchNights, watchFields, fromSync, pack, unpack };
 })();

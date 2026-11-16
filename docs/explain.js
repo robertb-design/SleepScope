@@ -14,9 +14,10 @@ const EX = (() => {
   function overview(nights, items) {
     const B = (t, w, f, im) => { if (items) items.push({ title: t, what: w, found: [...f], imp: [...im] }); return block(t, w, f, im); };
     if (!nights.length) return ''; const S = nights.map(n => n.stats), L = nights.map(n => SS.label(n.date)), N = nights.length; const g = (k) => S.map(s => s[k]); const out = [];
-    const h = nights.map(n => n.hours); const low = L.filter((_, i) => h[i] < 4); const split = L.filter((_, i) => S[i].sessions > 1); let f = [], im = [];
+    const h = nights.map(n => n.hours); const nm = L.filter((_, i) => S[i].no_mask); const low = L.filter((_, i) => h[i] < 4 && !S[i].no_mask); const split = L.filter((_, i) => S[i].sessions > 1 && !S[i].no_mask); let f = [], im = [];
+    if (nm.length) { f.push(`No mask on ${nm.length <= 3 ? nm.join(', ') : nm.length + ' of ' + N + ' nights'}; those count as zero hours.`); im.push('On nights the mask cannot be worn, keep the ring and Watch on: they show what an untreated night costs, in the Synopsis under Nights without the mask.'); }
     if (low.length) f.push(`${low.length} of ${N} nights were under 4 hours (${low.slice(0, 6).join(', ')}${low.length > 6 ? ', ...' : ''}).`);
-    if (N > 1) f.push(`Shortest ${Math.min(...h).toFixed(1)} h (${L[h.indexOf(Math.min(...h))]}), longest ${Math.max(...h).toFixed(1)} h (${L[h.indexOf(Math.max(...h))]}).`);
+    { const ht = h.map((x, i) => (S[i].no_mask ? NaN : x)), ok = ht.filter(Number.isFinite); if (ok.length > 1) { const lo = Math.min(...ok), hi = Math.max(...ok); f.push(`Shortest ${lo.toFixed(1)} h (${L[ht.indexOf(lo)]}), longest ${hi.toFixed(1)} h (${L[ht.indexOf(hi)]}).`); } }
     if (split.length) f.push(`Mask came off and went back on mid-night on ${split.length} night${split.length > 1 ? 's' : ''}.`);
     if (mean(h) < 6) im.push('Hours are the single biggest lever. Aim for the mask on at lights-out and left on until you get up; every untreated hour is an hour of the original apnea.');
     if (split.length) im.push('For the mid-night gaps, note what woke you (leak noise, dry mouth, pressure, bathroom). Dry mouth with the mask off points to mouth breathing: a chin strap or mouth tape, or a full-face mask. Pressure discomfort on falling asleep: ask about EPR or a longer ramp.');
@@ -53,6 +54,13 @@ const EX = (() => {
     return `<div style="font-size:13px;line-height:1.45">${out.join('')}</div>`;
   }
   function night(n) {
+    if (n.noMask) { const s = n.stats, fn = Number.isFinite, f = [], im = [], out = [];
+      if (fn(s.spo2_mean)) { f.push(`Ring for ${s.ring_hours.toFixed(1)} h: mean SpO2 ${s.spo2_mean.toFixed(1)}%, lowest ${s.spo2_min.toFixed(0)}%, ${s.spo2_pct_lt90.toFixed(1)}% of the time under 90%, ODI ${s.ODI.toFixed(1)} oxygen dips per hour, pulse ${s.pulse_mean.toFixed(0)} bpm.`);
+        if (s.ODI >= 15 || s.spo2_pct_lt90 > 5) im.push('Untreated, the oxygen dips are frequent. This is what the mask is preventing; a night without it is not free.'); else if (s.ODI >= 5) im.push('A mild number of oxygen dips without the mask. Compare with your treated nights in the Synopsis.'); else im.push('Few oxygen dips even without the mask this night. One night is not a pattern; the treated nights remain the reference.'); }
+      else { f.push('No ring data this night.'); im.push('Wear the ring even when the mask cannot be worn; it is the only measure of what an untreated night does to your oxygen.'); }
+      out.push(block('No mask this night', 'The machine recorded nothing, so this night comes from the ring and the Watch alone. It counts as zero hours of therapy.', f, im));
+      const a = n.apple; if (a && a.stages && a.stages.length) out.push(block('Apple Watch', 'Sleep stages and breathing from the Watch.', [`Watch: asleep ${a.asleep_h.toFixed(1)} h, deep plus REM ${(a.deep_min + a.rem_min).toFixed(0)} min` + (fn(a.bd) ? `, Breathing Disturbances ${a.bd.toFixed(1)} per hour` : '') + '.'], ['Breathing Disturbances on nights without the mask, set against treated nights, show what the therapy changes.']));
+      return `<div style="font-size:13px;line-height:1.45">${out.join('')}</div>`; }
     if (n.summary_only) return `<p><b>Card was out this night.</b> Only the machine's own daily summary exists, so there are no panels to explain. The card above lists its numbers.</p>`;
     const s = n.stats; const aev = n.sessions.flatMap(x => x.app); const out = []; let f = [], im = [];
     if (s.mode === 'CPAP') f.push(`Fixed at ${s.press_max.toFixed(0)} cmH2O after the ramp.`); else f.push(`Ranged ${s.press_min.toFixed(0)} to ${s.press_max.toFixed(0)}, median ${s.press_med.toFixed(1)}, 95th percentile ${s.press_95.toFixed(1)}; at the ceiling ${s.press_at_max_pct.toFixed(0)}% of the night.`);

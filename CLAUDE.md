@@ -96,6 +96,14 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
 - Watch data reaches the phone as `health.json` inside `SleepScope card.zip` (desktop `apple_health.to_sync`, phone
   `AH.fromSync`), trimmed to the card's nights.
 
+- No-mask nights (mask could not be worn): ring recordings of 10 min or more that match no CPAP session become nights of their own
+  (`loader.no_mask_ring_nights` / `SS.noMaskRingNights`, fed by the `unmatched` list of the ring readers), and Watch sleep of an
+  hour or more on a date with no CPAP or ring night, from the first loaded night on, does too (`apple_health.no_mask_watch_nights` /
+  `AH.noMaskWatchNights`). They carry `no_mask` / `noMask`, a stand-in session spanning the recording (stem RING or WATCH), hours 0
+  (`span_hours` for the ring time), machine stats NaN, mode 'No mask', Watch cover 0. Shown as "no mask" in the nights table, with
+  their own Night explanation, excluded from the oxygen section of the Synopsis and compared with treated nights in its
+  "Nights without the mask" section; Usage counts them as zero hours and leaves them out of shortest and longest.
+
 ## Scoring rules that matter
 - AHI (machine) comes from the machine. The app's own recount is shown beside it, never instead of it.
 - App hypopneas count only when the ring confirms them (3 point SpO2 drop from the 2 min pre-event median,

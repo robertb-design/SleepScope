@@ -170,7 +170,7 @@ const SS = (() => {
     return out;
   }
   function nightStats(nt) {
-    const ss = nt.sessions, hrs = nt.hours; const pr = cat(ss, 'Press'), leak = cat(ss, 'Leak', 60), fl = cat(ss, 'FlowLim'), sn = cat(ss, 'Snore'), rr = cat(ss, 'RespRate'), tv = cat(ss, 'TidVol', 1000), mv = cat(ss, 'MinVent'), epr = cat(ss, 'EprPress');
+    const ss = nt.sessions, hrs = nt.hours || (nt.noMask ? nt.span_hours : 0); const pr = cat(ss, 'Press'), leak = cat(ss, 'Leak', 60), fl = cat(ss, 'FlowLim'), sn = cat(ss, 'Snore'), rr = cat(ss, 'RespRate'), tv = cat(ss, 'TidVol', 1000), mv = cat(ss, 'MinVent'), epr = cat(ss, 'EprPress');
     for (const s of ss) annotateEvents(s);
     const mev = ss.flatMap(s => s.machine), aevAll = ss.flatMap(s => s.app), aev = aevAll.filter(counted); const cnt = (ev, l) => ev.filter(e => e.label === l).length;
     const hypAll = aevAll.filter(e => e.label === 'Hypopnea'), hypChecked = hypAll.filter(e => e.confirm !== null), hypConf = hypChecked.filter(e => e.confirm === 'desat' || e.confirm === 'pulse');
@@ -200,9 +200,11 @@ const SS = (() => {
       Object.assign(st, { mode: 'Summary only', AHI: sm.AHI, OA: rr(sm.OAI), CA: rr(sm.CAI), H: rr(sm.HI), UA: rr(sm.UAI), CAI: sm.CAI, arousals: NaN, app_AHI: NaN, app_apneas: NaN, app_hypopneas: NaN, app_unflagged: NaN, app_flowlim_runs: NaN, app_leak_excluded: NaN, app_hyp_conf_txt: '',
         leak_med: sm.leak_med, leak_95: sm.leak_95, leak_max: sm.leak_max, leak_pct_large: NaN, press_med: sm.press_med, press_95: sm.press_95, press_max: sm.press_max, press_min: NaN, press_floor: NaN, press_at_max_pct: NaN,
         rr_med: sm.rr_med, tv_med: sm.tv_med, mv_med: sm.mv_med, flowlim_95: NaN, flowlim_minutes: NaN, summary_only: true, str_setting: strSetting(nt, 'AutoSet') }); }
+    if (nt.noMask) { for (const k of ['AHI', 'OA', 'CA', 'H', 'UA', 'CAI', 'arousals', 'app_AHI', 'app_RDI', 'app_apneas', 'app_hypopneas', 'app_unflagged', 'app_flowlim_runs', 'app_RERA_like', 'app_leak_excluded', 'leak_med', 'leak_95', 'leak_max', 'leak_pct_large', 'press_med', 'press_95', 'press_max', 'press_min', 'press_floor', 'press_at_max_pct', 'rr_med', 'tv_med', 'mv_med', 'flowlim_95', 'flowlim_minutes', 'periodic_windows', 'epr_med']) if (k in st) st[k] = NaN;
+      Object.assign(st, { mode: 'No mask', hours: 0, no_mask: true, app_hyp_conf_txt: '', ring_hours: nt.span_hours || 0 }); }
     return st;
   }
-  function pressureLabel(st) { if (st.str_setting) return st.str_setting; if (st.summary_only) return ''; const lo = Number.isFinite(st.press_floor) ? st.press_floor : st.press_min, hi = st.press_max; if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ''; return st.mode === 'CPAP' ? `CPAP ${hi.toFixed(0)} (trace)` : `AutoSet ${lo.toFixed(0)} to ${hi.toFixed(0)} (trace)`; }
+  function pressureLabel(st) { if (st.no_mask) return ''; if (st.str_setting) return st.str_setting; if (st.summary_only) return ''; const lo = Number.isFinite(st.press_floor) ? st.press_floor : st.press_min, hi = st.press_max; if (!Number.isFinite(lo) || !Number.isFinite(hi)) return ''; return st.mode === 'CPAP' ? `CPAP ${hi.toFixed(0)} (trace)` : `AutoSet ${lo.toFixed(0)} to ${hi.toFixed(0)} (trace)`; }
   function fmtTime(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
   function label(dateStr) { const [y, m, d] = dateStr.split('-').map(Number); const dt = new Date(y, m - 1, d); return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' }); }
 
@@ -254,11 +256,20 @@ const SS = (() => {
     h2('Breathing mechanics');
     if (fin(rr) && fin(tv) && fin(mv)) p(`Median respiratory rate ${rr.toFixed(0)} breaths per minute, tidal volume ${tv.toFixed(0)} mL, minute ventilation ${mv.toFixed(1)} L/min. ` + ((rr >= 12 && rr <= 20 && tv >= 400 && tv <= 600 && mv >= 5 && mv <= 8) ? 'All within the usual adult ranges during sleep (about 12 to 20 breaths/min, 400 to 600 mL, 5 to 8 L/min).' : 'One or more of these sits outside the usual adult sleep ranges (about 12 to 20 breaths/min, 400 to 600 mL, 5 to 8 L/min). Machine-estimated volumes are approximate; a value a little outside the band is common.')); else p('Breathing rate and volume channels were not present for these nights.');
     h2('Oxygen');
-    if (hasOx) { const ox = sel.filter(n => fin(n.stats.spo2_mean)); const ms = wmean(ox, 'spo2_mean'), mn = Math.min(...ox.map(n => n.stats.spo2_min)), lt90 = wmean(ox, 'spo2_pct_lt90'), odi = wmean(ox, 'ODI'); const lt88 = amean(ox, 'spo2_minutes_lt88');
+    if (hasOx) { const ox = sel.filter(n => fin(n.stats.spo2_mean) && !n.noMask); const ms = wmean(ox, 'spo2_mean'), mn = Math.min(...ox.map(n => n.stats.spo2_min)), lt90 = wmean(ox, 'spo2_pct_lt90'), odi = wmean(ox, 'ODI'); const lt88 = amean(ox, 'spo2_minutes_lt88');
       p(`Oximetry on ${ox.length} night${ox.length > 1 ? 's' : ''}: mean SpO2 ${ms.toFixed(1)}%, lowest reading ${mn.toFixed(0)}%, ${lt90.toFixed(1)}% of the night below 90%, 3% desaturation index ${odi.toFixed(1)} per hour.`);
       if (lt88 >= 5) p(`Time below 88% averaged ${lt88.toFixed(0)} minutes a night. Five minutes or more below 88% in a night is the threshold insurers and physicians use for nocturnal hypoxemia; this is worth raising with the prescriber.`);
       if (odi < 5 && lt90 < 1) p('That is a normal oxygen profile. The point of treating apnea is to stop the repeated oxygen dips that load the heart and blood vessels; on these nights that is happening.'); else if (odi < 15) p('A mild number of desaturations is getting through. Match them against the events in the Night view: if they line up with flagged events the pressure is slightly short; if they occur with no event, look at leak and position.'); else p('Significant desaturation is occurring despite therapy. Take this to the prescriber; it is the result that changes management.'); }
     else p('No oximeter data in this range. AHI counts the events; it does not say what they did to your oxygen. Import an O2Ring CSV and this section fills in.');
+    const nomask = sel.filter(n => n.noMask);
+    if (nomask.length) { h2('Nights without the mask');
+      p(`${nomask.length} night${nomask.length > 1 ? 's' : ''} with no CPAP (${nomask.map(n => label(n.date)).join(', ')}). The machine recorded nothing, so these come from the ring and Watch alone. They are the closest thing to an untreated baseline you have, and they count as zero hours of therapy in Usage.`);
+      const treated = sel.filter(n => !n.noMask && !n.summary_only); const mean = (ns, k) => { const v = ns.map(n => n.stats[k]).filter(x => typeof x === 'number' && Number.isFinite(x)); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; };
+      const rows = []; for (const [k, name, dp] of [['ODI', 'ODI, oxygen dips per hour', 1], ['spo2_mean', 'mean SpO2 %', 1], ['spo2_min', 'lowest SpO2 %', 0], ['spo2_pct_lt90', '% of the night under 90', 1], ['pulse_mean', 'mean pulse', 0], ['w_bd', 'Watch Breathing Disturbances', 1]]) { const a = mean(nomask, k), b = mean(treated, k); if (Number.isFinite(a)) rows.push(`${name}: ${a.toFixed(dp)} without the mask` + (Number.isFinite(b) ? ` against ${b.toFixed(dp)} with it` : '')); }
+      if (rows.length) p(rows.join('; ') + '.');
+      const oa = mean(nomask, 'ODI'), ob = mean(treated, 'ODI');
+      if (Number.isFinite(oa) && Number.isFinite(ob)) { if (oa >= Math.max(5, 2 * ob)) p('Without the mask the oxygen dips come back. That is what the therapy is preventing, and why a night off it matters.'); else if (oa < 5) p('Even without the mask the ring found few oxygen dips on these nights. One or two nights do not make a pattern; the machine AHI on treated nights remains the reference.'); }
+      else if (!nomask.some(n => Number.isFinite(n.stats.spo2_mean))) p('No ring data on these nights. Wear the ring even when the mask cannot be worn; those nights show what untreated sleep does to your oxygen.'); }
     h2('What this means for you'); const items = [`Treated hours are ${ahi < 5 ? 'well' : 'not fully'} controlled (AHI ${ahi.toFixed(1)}).`];
     if (comp < 70 || totH / sel.length < 6) items.push('The biggest gain available is more hours per night with the mask on.'); if (leakNights.length) items.push('Fix the seal on the nights leak climbed; that is lost therapy.'); if (fl95 >= 0.15) items.push('Flow limitation is the number to watch if you feel unrefreshed despite a low AHI.'); if (!hasOx) items.push('Add oximetry to see the oxygen side; it is half the picture and currently missing.'); if (rns.length > 1) items.push('Hold one setting for at least a week before judging it; single nights swing too much to compare settings on.');
     H_.push('<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>');
@@ -267,21 +278,32 @@ const SS = (() => {
   }
 
   // ---------------------------------------------------------------- oximeter CSV
-  function importOximeterCsv(text, nights) {
+  function importOximeterCsv(text, nights, unmatched) {
     const lines = text.split(/\r?\n/).filter(l => l.trim()); if (lines.length < 2) return 0; const splitQ = (l) => { const out = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; }; const hdr = splitQ(lines[0]).map(h => h.trim().toLowerCase());
     const col = (...keys) => hdr.findIndex(h => keys.some(k => h.includes(k))); const ti = col('time', 'date'), si = col('spo2', 'oxygen', 'o2'), pi = col('pulse', 'hr', 'heart'), mi = col('motion', 'movement', 'activity'); const ai = hdr.map((h, i) => (/reminder|alarm|vibrat/.test(h) ? i : -1)).filter(i => i >= 0); if (ti < 0 || si < 0) return 0;
     const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
     const parse = (s) => { s = s.trim(); let m = s.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/i); if (m && MON[m[5].toLowerCase()] !== undefined) { let h = +m[1]; if (m[4]) { if (/pm/i.test(m[4]) && h < 12) h += 12; if (/am/i.test(m[4]) && h === 12) h = 0; } return new Date(+m[7], MON[m[5].toLowerCase()], +m[6], h, +m[2], +m[3]); } m = s.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/i); if (m) { let h = +m[1]; if (m[4]) { if (/pm/i.test(m[4]) && h < 12) h += 12; if (/am/i.test(m[4]) && h === 12) h = 0; } return new Date(+m[7], +m[5] - 1, +m[6], h, +m[2], +m[3]); } m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})/); if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]); m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?$/i); if (m) { let h = +m[4]; if (m[7]) { if (/pm/i.test(m[7]) && h < 12) h += 12; if (/am/i.test(m[7]) && h === 12) h = 0; } return new Date(+m[3], +m[1] - 1, +m[2], h, +m[5], +m[6]); } return null; };
     const ts = [], sp = [], pu = [], mo = [], al = []; for (let i = 1; i < lines.length; i++) { const c = lines[i].includes('"') ? splitQ(lines[i]) : lines[i].split(','); const t = parse(c[ti] || ''); let v = parseFloat(c[si]); if (!t) continue; if (!(v >= 50 && v <= 100)) v = NaN; ts.push(t.getTime() / 1000); sp.push(v); { const pv = pi >= 0 ? parseFloat(c[pi]) : NaN; pu.push(pv >= 25 && pv <= 250 ? pv : NaN); } mo.push(mi >= 0 ? parseFloat(c[mi]) : NaN); let f = 0; for (const k of ai) { const x = parseFloat(c[k]); if (Number.isFinite(x) && x > f) f = x; } al.push(f); }
-    return attachOx(ts, sp, pu, mo, al, mi >= 0, nights);
+    const got = attachOx(ts, sp, pu, mo, al, mi >= 0, nights); if (!got && unmatched && ts.length >= 600) unmatched.push([ts, sp, pu, mo, al, mi >= 0]); return got;
   }
   // Wellue O2 Insight Pro raw recording: name yyyymmddHHMMSS, 10 byte header 01 03..., 3 bytes per second (SpO2, pulse, motion; 255 = none), 48 byte footer.
-  function importO2RingRaw(buf, name, nights) {
+  function importO2RingRaw(buf, name, nights, unmatched) {
     const m = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(name || ''); const d = new Uint8Array(buf); if (!m || d.length < 58 + 180 || d[0] !== 1 || d[1] !== 3) return 0;
     const n = (d.length - 58) % 3 === 0 ? (d.length - 58) / 3 : Math.floor((d.length - 10) / 3); const t0 = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() / 1000;
     const ts = [], sp = [], pu = [], mo = [], al = [];
     for (let i = 0; i < n; i++) { const o = 10 + 3 * i, v = d[o], p = d[o + 1], q = d[o + 2]; ts.push(t0 + i); sp.push(v >= 50 && v <= 100 ? v : NaN); pu.push(p >= 25 && p < 255 ? p : NaN); mo.push(q === 255 ? NaN : q); al.push(0); }
-    return attachOx(ts, sp, pu, mo, al, true, nights);
+    const got = attachOx(ts, sp, pu, mo, al, true, nights); if (!got && unmatched && ts.length >= 600) unmatched.push([ts, sp, pu, mo, al, true]); return got;
+  }
+  /** Nights the mask could not be worn: ring recordings that matched no CPAP session become nights of their own (port of
+   *  loader.no_mask_ring_nights). A stand-in session spans each recording so oxygen, pulse and motion work unchanged. */
+  const nightKeyOf = (d) => { const x = new Date(d.getTime() - 12 * 3600e3); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  function noMaskRingNights(recs, nights) {
+    const have = Object.fromEntries(nights.map(n => [n.date, n])), made = {};
+    for (const rec of recs) { const ts = rec[0]; const start = new Date(ts[0] * 1000), k = nightKeyOf(start); const old = have[k];
+      if (old && !old.noMask) continue; let nt = made[k] || old; if (!nt) nt = made[k] = { date: k, sessions: [], hours: 0, span_hours: 0, noMask: true };
+      nt.sessions.push({ start, duration: ts[ts.length - 1] - ts[0] + 1, ch: {}, machine: [], app: [], ring: true }); nt.sessions.sort((a, b) => a.start - b.start);
+      nt.span_hours = nt.sessions.reduce((a, x) => a + x.duration, 0) / 3600; attachOx(...rec, [nt]); }
+    return Object.values(made);
   }
   function attachOx(ts, sp, pu, mo, al, hasMo, nights) {
     let filled = 0;
@@ -405,6 +427,6 @@ const SS = (() => {
     }
     return out;
   }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw, pressureProfile, pressureProfileText, pressureReading, reraAtCeiling, setReraThr: (v) => { RERA_THR = v; } };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw, pressureProfile, pressureProfileText, pressureReading, reraAtCeiling, noMaskRingNights, setReraThr: (v) => { RERA_THR = v; } };
 })();
 if (typeof module !== 'undefined') module.exports = SS;
