@@ -24,7 +24,8 @@ jobs:
       - name: Self test the built exe (no release if it cannot import numpy, scipy, Qt)
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist/SleepScope/SleepScope.exe -ArgumentList '--selftest' -Wait -PassThru
+          $p = Start-Process -FilePath dist/SleepScope/SleepScope.exe -ArgumentList '--selftest' -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'built exe hung on start' }
           Get-Content dist/SleepScope/selftest.txt
           Remove-Item dist/SleepScope/selftest.txt
           if ($p.ExitCode -ne 0) { throw "self test failed with exit code $($p.ExitCode)" }
@@ -42,11 +43,12 @@ jobs:
         run: |
           $app = "$env:LOCALAPPDATA\Programs\SleepScope"
           try { Invoke-WebRequest -UseBasicParsing -Uri https://github.com/${{ github.repository }}/releases/latest/download/SleepScope-Setup.exe -OutFile old-setup.exe
-                Start-Process old-setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait; Start-Sleep 5 } catch { Write-Host "no earlier release to upgrade from: $_" }
+                (Start-Process old-setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit(); Start-Sleep 10 } catch { Write-Host "no earlier release to upgrade from: $_" }
           Get-Process SleepScope -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Process installer_out/SleepScope-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait; Start-Sleep 5
+          (Start-Process installer_out/SleepScope-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit(); Start-Sleep 10
           Get-Process SleepScope -ErrorAction SilentlyContinue | Stop-Process -Force
-          $p = Start-Process -FilePath "$app\SleepScope.exe" -ArgumentList '--selftest' -Wait -PassThru
+          $p = Start-Process -FilePath "$app\SleepScope.exe" -ArgumentList '--selftest' -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'installed copy hung on start' }
           Get-Content "$app\selftest.txt"
           if ($p.ExitCode -ne 0) { throw "installed copy failed its self test (exit $($p.ExitCode))" }
       - uses: actions/upload-artifact@v4
