@@ -112,6 +112,9 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
   `LAND_LAYERS`, `#landlayers`, `Plotly.restyle` in app.js): Breathing, Leak, Pressure, Events, Ring SpO2, Ring pulse, Ring motion,
   Watch stages, Watch heart rate. Switching hides or shows without redrawing (the camera stays), hidden layers cannot be clicked,
   and the choice is remembered (QSettings `land_layer_<key>`, phone `ss_land_<key>`).
+  Watch heart rate in 3D uses the ring pulse height scale (40 bpm at 1.2 Z, 120 at 2.2 Z) with its bpm written about once an
+  hour; Watch SpO2 dots are no longer drawn in 3D. Verified: Watch heart rate and ring pulse agree within about 1 bpm at zero
+  time lag on Robert's nights (11/02 to 11/14), so any visual offset is drawing, not data.
 
 - My notes (`notes.py`, `MyNotesView` in ui_notes.py, tab 'My notes'; phone: card on the Synopsis page, `SS.notes*` in engine.js):
   {id, date (the night), text, change, updated, deleted}. Stored in QSettings `sleep_notes` and `Sleep notes.json` in the

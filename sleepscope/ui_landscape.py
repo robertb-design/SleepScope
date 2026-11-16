@@ -87,7 +87,7 @@ LAYERS = [('terrain', 'Breathing', ('terrain', 'floor', 'summary')), ('water', '
 TIPS = {'terrain': 'The terrain: height is how freely you breathed, grey floor is mask off', 'water': 'Blue pools where leak was over 24 L/min',
         'pressure': 'The magenta line: pressure the machine delivered', 'event': 'Pillars: red obstructive, violet central, orange hypopnea',
         'spo2': 'Ring blood oxygen line, red beads under 90%', 'pulse': 'Ring pulse line (teal)', 'motion': 'Grey beads where the ring hand moved',
-        'stage': 'Apple Watch sleep stage ribbon in front of each strip', 'watch': 'Apple Watch heart rate line and SpO2 dots'}
+        'stage': 'Apple Watch sleep stage ribbon in front of each strip', 'watch': 'Apple Watch heart rate line with its bpm about once an hour'}
 KIND_LAYER = {k: key for key, _, kinds in LAYERS for k in kinds}
 
 
@@ -285,23 +285,18 @@ class LandscapeView(QtWidgets.QWidget):
                     rib = gl.GLSurfacePlotItem(x=xs, y=yr, z=Zr, colors=Cr, shader='shaded', smooth=True, glOptions='translucent')
                     self._add(rib, 'stage')
                 if ap.get('hr'):
-                    th = np.array([(t - base).total_seconds() / BIN_S * 0.25 for t, _ in ap['hr']]); vh = np.array([v for _, v in ap['hr']])
+                    # same height scale as the ring pulse (40 bpm at 1.2 Z, 120 bpm at 2.2 Z) so the two read level with each other;
+                    # the Watch samples every few minutes, so its line is coarser. Numbers in bpm on the line about once an hour.
+                    th = np.array([(t - base).total_seconds() / BIN_S * 0.25 for t, _ in ap['hr']]); vh = np.array([v for _, v in ap['hr']], dtype=float)
                     ok = (th >= 0) & (th <= xs[-1])
                     if ok.sum() > 2:
-                        zh = Z_SCALE * (1.6 + (vh[ok] - 40) / 80)       # 40 bpm at 1.6 Z, 120 bpm at 2.6 Z
-                        vsm = np.convolve(vh[ok], np.ones(5) / 5, 'same'); zh = Z_SCALE * (1.6 + (vsm - 40) / 80)
-                        pts = np.column_stack([th[ok], np.full(ok.sum(), ys[k] - strip_w / 2 - 1.1), zh])
-                        hrl = gl.GLLinePlotItem(pos=pts, color=_hex(C['red'], 0.9), width=1.5, antialias=True, mode='line_strip', glOptions='opaque')
-                        self._add(hrl, 'watch')
-                if ap.get('spo2'):
-                    ts_ = np.array([(t - base).total_seconds() / BIN_S * 0.25 for t, _ in ap['spo2']]); vs = np.array([v for _, v in ap['spo2']])
-                    ok = (ts_ >= 0) & (ts_ <= xs[-1])
-                    if ok.any():
-                        low = vs[ok] < 90
-                        pts = np.column_stack([ts_[ok], np.full(ok.sum(), ys[k] - strip_w / 2 - 1.1), np.full(ok.sum(), 0.3 * Z_SCALE)])
-                        cols = np.array([_hex(C['red']) if l else _hex('#ffffff', 0.9) for l in low])
-                        sp = gl.GLScatterPlotItem(pos=pts, color=cols, size=6 + 4 * low.astype(float).max() if False else 6, pxMode=True, glOptions='translucent')
-                        self._add(sp, 'watch')
+                        tw, vw = th[ok], vh[ok]; zh = Z_SCALE * (1.2 + (np.clip(vw, 40, 120) - 40) / 80); yw = ys[k] - strip_w / 2 - 1.1
+                        self._add(gl.GLLinePlotItem(pos=np.column_stack([tw, np.full(len(tw), yw), zh]), color=_hex(C['red'], 0.9), width=2, antialias=True, mode='line_strip', glOptions='opaque'), 'watch')
+                        last = -1e9
+                        for x_, v_, z_ in zip(tw, vw, zh):
+                            if x_ - last < 3600 / BIN_S * 0.25: continue          # one number per hour of the night
+                            last = x_
+                            self._add(gl.GLTextItem(pos=(float(x_), float(yw), float(z_ + 0.12 * Z_SCALE)), text=f'{v_:.0f}', color=QtGui.QColor(C['red']), font=QtGui.QFont('Segoe UI', 8, QtGui.QFont.Bold)), 'watch')
             # night label at the left end of the strip
             if N <= 14 or k % max(1, int(np.ceil(N / 14))) == 0:
                 lab = gl.GLTextItem(pos=(-14, ys[k], 0.5), text=nt.label if N <= 10 else nt.label.split(' ')[-1], color=QtGui.QColor(C['text']), font=QtGui.QFont('Segoe UI', 9))
@@ -431,8 +426,7 @@ class LandscapeKey(QtWidgets.QWidget):
             (('line', '#0e9aa7'), 'Teal line, furthest back: ring pulse'),
             (('dot', '#52514e'), 'Grey beads on it: ring motion (hand moving)'),
             (('swatch', '#8f9bb3'), 'Flat slate: card was out, machine summary only'),
-            (('line', C['red']), 'Red line: Watch heart rate'),
-            (('dot', None), 'Dots: Watch SpO2 (red = under 90%)'),
+            (('line', C['red']), 'Red line: Watch heart rate, bpm hourly'),
         ]
         y = base + 58
         for (kind, c), label in rows:
