@@ -8,11 +8,12 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - run: pip install -r requirements.txt pyinstaller
+      - run: pip install -r requirements.txt pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.10
       - name: Stamp version
         shell: pwsh
         run: |
@@ -20,6 +21,13 @@ jobs:
           Set-Content -Path sleepscope/version.py -Value "VERSION = `"1.0.${{ github.run_number }}`"`nBUILD_DATE = `"$d`"`n"
           Get-Content sleepscope/version.py
       - run: pyinstaller --noconfirm --clean SleepScope.spec
+      - name: Self test the built exe (no release if it cannot import numpy, scipy, Qt)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist/SleepScope/SleepScope.exe -ArgumentList '--selftest' -Wait -PassThru
+          Get-Content dist/SleepScope/selftest.txt
+          Remove-Item dist/SleepScope/selftest.txt
+          if ($p.ExitCode -ne 0) { throw "self test failed with exit code $($p.ExitCode)" }
       - run: Copy-Item README.md dist/SleepScope/
       - run: Compress-Archive -Path dist/SleepScope/* -DestinationPath SleepScope-Windows-x64.zip
       - name: Build installer (Inno Setup)
@@ -29,6 +37,18 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           & $iscc /DMyAppVersion=1.0.${{ github.run_number }} installer.iss
           Get-ChildItem installer_out
+      - name: Upgrade test (install the current release, update it with this build, then start it)
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\SleepScope"
+          try { Invoke-WebRequest -UseBasicParsing -Uri https://github.com/${{ github.repository }}/releases/latest/download/SleepScope-Setup.exe -OutFile old-setup.exe
+                Start-Process old-setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait; Start-Sleep 5 } catch { Write-Host "no earlier release to upgrade from: $_" }
+          Get-Process SleepScope -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Process installer_out/SleepScope-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait; Start-Sleep 5
+          Get-Process SleepScope -ErrorAction SilentlyContinue | Stop-Process -Force
+          $p = Start-Process -FilePath "$app\SleepScope.exe" -ArgumentList '--selftest' -Wait -PassThru
+          Get-Content "$app\selftest.txt"
+          if ($p.ExitCode -ne 0) { throw "installed copy failed its self test (exit $($p.ExitCode))" }
       - uses: actions/upload-artifact@v4
         with:
           name: SleepScope-Windows-x64

@@ -19,6 +19,10 @@ Two programs share the same scoring rules and must stay in step (parity is a har
   (version 1.0.<run number>, build date), builds the exe with PyInstaller (`SleepScope.spec`), builds the
   installer with Inno Setup (`installer.iss`), and publishes a GitHub Release with
   `SleepScope-Setup.exe` (per user install, desktop icon, Installed apps entry) and a portable zip.
+- Build safety (after numpy ImportError on Robert's PC, 1.0.61): `requirements.txt` and PyInstaller are pinned to the set of
+  1.0.58; the built exe runs `SleepScope.exe --selftest` (run.py: imports numpy, scipy, Qt, the app; writes selftest.txt) and an
+  upgrade test installs the current release, updates it with the new installer and self tests the installed copy; no release
+  if either fails. `installer.iss` [InstallDelete] wipes `{app}\_internal` so an update never mixes old and new library files.
 - Every push also runs `pages.yml`, which looks up the build.yml run number for the same commit, stamps
   `docs/version.js` with the same 1.0.N, and deploys the phone app. Both apps show the version in their header.
 - Both apps check for a new version every time they open. Desktop: `updater.py` asks the GitHub releases API on start

@@ -33,6 +33,10 @@ LicenseFile=LICENSE
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
+[InstallDelete]
+; every install or update starts from a clean program folder, so files left by an older version (numpy, Qt) cannot mix with the new ones
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "dist\SleepScope\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
