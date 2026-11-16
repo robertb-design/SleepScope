@@ -9,7 +9,8 @@ from .ui_night import NightView
 from .ui_ask import AskView, AskWorker, build_context, SYSTEM as ASK_SYSTEM
 import hashlib
 from .ui_landscape import LandscapeView
-from .ui_notes import NotesView
+from .ui_notes import NotesView, MyNotesView
+from . import notes as notes_mod
 from .ui_help import HelpView
 from .ui_update import UpdateView
 from .ui_home import HomeView
@@ -86,6 +87,7 @@ class PhoneSyncWorker(QtCore.QThread):
                 for rp in self.ring_files:
                     try: z.write(rp, 'O2/' + os.path.basename(rp)); rings += 1
                     except OSError: pass
+                if notes_mod.CURRENT: z.writestr('notes.json', json.dumps({'notes': notes_mod.CURRENT}))   # My notes for the phone
                 about = (SETTINGS.value('about_me', '') or '').strip()
                 if about: z.writestr('about.txt', about)                 # About me for the phone's Ask Claude
                 if self.health:                                        # Watch nights, trimmed to the card's window, for the phone
@@ -372,7 +374,7 @@ class SynopsisView(QtWidgets.QWidget):
         if a > b: a, b = b, a
         sel = [n for n in self.nights if a <= n.date <= b]
         if not sel: return
-        sig = hashlib.md5(('|'.join(f"{n.date}:{n.hours:.3f}:{n.stats.get('AHI', 0):.3f}:{n.stats.get('spo2_mean', 0)}" for n in sel) + f"|{self.diag.value()}|{SETTINGS.value('about_me', '')}").encode()).hexdigest()
+        sig = hashlib.md5(('|'.join(f"{n.date}:{n.hours:.3f}:{n.stats.get('AHI', 0):.3f}:{n.stats.get('spo2_mean', 0)}" for n in sel) + f"|{self.diag.value()}|{SETTINGS.value('about_me', '')}|{json.dumps(notes_mod.live(notes_mod.CURRENT))}").encode()).hexdigest()
         cache = SETTINGS.value('claude_synopsis_cache', {}) or {}
         if not force and sig in cache:
             self.claude_text.setMarkdown(cache[sig]); self.claude_status.setText(f'Shown from cache ({a} to {b}). Press Ask Claude now to refresh.'); return
@@ -491,6 +493,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.synopsis = SynopsisView(); self.tabs.addTab(Page(self.synopsis, 'Synopsis', 'Plain English report for any date range, with Claude\'s reading beside it.', '#1baf7a'), 'Synopsis')
         self.landscape = LandscapeView(); self.synopsis.on_range = lambda a, b: self.landscape.set_range(a, b); self.tabs.addTab(Page(self.landscape, '3D Landscape', 'A week as terrain. Height is how freely you breathed. Click any pillar, pool or patch of ground for a plain language explanation.', '#6250d6'), '3D Landscape')
         self.ask = AskView(); self.tabs.addTab(Page(self.ask, 'Ask Claude', 'Questions about your results, answered from your numbers and saved for later.', '#eb6834'), 'Ask Claude')
+        self.mynotes = MyNotesView(); self.tabs.addTab(Page(self.mynotes, 'My notes', 'Your own notes, night by night: mask changes, colds, late nights. The Synopsis and Claude read them.', '#eb6834'), 'My notes')
+        self.mynotes.changed.connect(self._notes_changed)
         self.notes = NotesView(); self.tabs.addTab(Page(self.notes, 'Saved answers', 'Everything Claude has written for you, searchable.', '#d95926'), 'Saved answers')
         self.notes.continue_requested.connect(self._continue_conversation)
         self.ask.answer_saved.connect(self.notes.refresh); self.ask.key_saved.connect(lambda: (self._refresh_home(), self.synopsis.ask_claude(force=False)))
@@ -565,7 +569,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill_nights()
         last_i = max((i for i, n in enumerate(self.nights) if n.sessions), default=len(self.nights) - 1)
         if last_i >= 0: self.night_table.selectRow(last_i)              # open on the newest night with data
-        self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.ask.set_profile_folder(self.phone_folder()); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
+        self.overview.set_nights(self.nights); self._fill_stats(); self._fill_device(); self.synopsis.set_nights(self.nights); self.ask.set_nights(self.nights); self.ask.set_card_root(data.get('root')); self.ask.set_profile_folder(self.phone_folder()); self.mynotes.set_folder(self.phone_folder()); self.notes.set_card_root(data.get('root')); self.landscape.set_nights(self.nights); self._refresh_home()
         if self.nights: self._auto_companions(data.get('root'))
         if self.nights: self._phone_sync()
         if self.nights: self.select_night(len(self.nights) - 1); self.landscape.mode.setCurrentIndex(0); self._show_tab(self.synopsis)
@@ -607,8 +611,17 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = self.night_table.selectionModel().selectedRows()
         if not rows: return
         nt = self.nights[rows[0].row()]; self.current = nt
+        self.mynotes.set_night(nt.date)
         self.night_view.set_night(nt); self.breaths.set_night(nt); self._fill_events(); self.landscape.set_selected(nt)
         if self.tabs.widget(self.tabs.currentIndex()) is self.home: self._show_tab(self.night_view)
+    def _notes_changed(self):
+        """A note was added, edited or deleted: the Synopsis, Claude's context and the Night reading pick it up."""
+        if not self.nights: return
+        try:
+            self.synopsis.generate(); self.ask.refresh_context()
+            cur = getattr(self, 'current', None)
+            if cur is not None: self.night_view.explain.setHtml(explain.night(cur))
+        except Exception as e: self.statusBar().showMessage(f'Notes refresh: {e}', 8000)
     def _show_tab(self, inner):
         for i in range(self.tabs.count()):
             wdg = self.tabs.widget(i)

@@ -103,6 +103,38 @@ const SS = (() => {
 
   // ---- oximetry dips, event annotation, ramp-free pressure floor (same rules as the desktop)
   let STR = null; function setStr(x) { STR = x; }
+  /* ---- My notes (port of notes.py): {id, date, text, change, updated, deleted}; newest edit of each id wins, deletes kept */
+  let NOTES = []; function setNotes(x) { NOTES = x || []; } function getNotes() { return NOTES; }
+  function notesMerge(...lists) { const by = {}; for (const l of lists) for (const n of l || []) { if (!n || !n.id || !n.date) continue; const o = by[n.id]; if (!o || (n.updated || 0) > (o.updated || 0)) by[n.id] = { ...n }; }
+    return Object.values(by).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.updated || 0) - (b.updated || 0))); }
+  const notesLive = (l) => (l || []).filter(n => !n.deleted && (n.text || '').trim());
+  const notesForRange = (l, a, b) => notesLive(l).filter(n => n.date >= a && n.date <= b);
+  const notesForNight = (l, d) => notesLive(l).filter(n => n.date === d);
+  const escH = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const NOTE_METRICS = [['hours', 'hours used', 1], ['AHI', 'machine AHI', 1], ['leak_95', 'leak 95th percentile L/min', 1], ['ODI', 'ODI', 1], ['spo2_mean', 'mean SpO2 %', 1], ['w_bd', 'Watch Breathing Disturbances', 1]];
+  function notesCompare(l, nights, end) {
+    const treated = nights.filter(n => !n.noMask && !n.summary_only), out = [];
+    for (const c of notesLive(l).filter(n => n.change && n.date <= end)) { const bef = treated.filter(n => n.date < c.date).slice(-14), aft = treated.filter(n => n.date >= c.date && n.date <= end).slice(0, 14); const rows = [];
+      const m = (ns, k) => { const v = ns.map(n => n.stats[k]).filter(x => typeof x === 'number' && Number.isFinite(x)); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : NaN; };
+      for (const [k, name, dp] of NOTE_METRICS) { const a = m(bef, k), b = m(aft, k); if (Number.isFinite(a) && Number.isFinite(b)) rows.push([name, a.toFixed(dp), b.toFixed(dp)]); }
+      out.push({ note: c, before: bef.length, after: aft.length, rows }); }
+    return out;
+  }
+  function notesSynopsis(l, nights, start, end) {
+    const inr = notesForRange(l, start, end), cmp = notesCompare(l, nights, end).filter(c => c.after || c.note.date >= start); if (!inr.length && !cmp.length) return '';
+    const H = ['<h3>Your notes</h3>']; if (inr.length) H.push('<ul>' + inr.map(n => `<li><b>${label(n.date)}</b>${n.change ? ' (change)' : ''}: ${escH(n.text)}</li>`).join('') + '</ul>');
+    for (const c of cmp) { const n = c.note, head = `<b>Since ${label(n.date)}</b> (${escH(n.text)}): `, pl = c.after !== 1 ? 's' : '';
+      if (!c.after) { H.push(`<p>${head}no treated nights after the change yet.</p>`); continue; }
+      if (!c.before || !c.rows.length) { H.push(`<p>${head}${c.after} treated night${pl} since, nothing before it to compare with.</p>`); continue; }
+      H.push(`<p>${head}${c.after} treated night${pl} after against ${c.before} before. ${c.rows.map(([nm, a, b]) => `${nm} ${b} against ${a} before`).join('; ')}.` + (c.after < 5 ? ' Too few nights after the change to judge; give it a week.</p>' : ' Enough nights to read a trend, though one setting or mask change can be masked by a cold, alcohol or a short night, so check the notes above.</p>')); }
+    return H.join('\n');
+  }
+  function notesContext(l, nights, start, end) {
+    const inr = notesForRange(l, start, end), earlier = notesLive(l).filter(n => n.change && n.date < start); if (!inr.length && !earlier.length) return '';
+    const lines = [...earlier, ...inr].map(n => `${label(n.date)}${n.change ? ' [change]' : ''}: ${n.text.split(/\s+/).join(' ')}`);
+    for (const c of notesCompare(l, nights, end)) if (c.before && c.after && c.rows.length) lines.push(`Before and after ${label(c.note.date)} (${c.before} nights before, ${c.after} after): ` + c.rows.map(([nm, a, b]) => `${nm} ${a} then ${b}`).join('; '));
+    return lines.join('\n');
+  }
   function desatEvents(s) {
     const sp = s.spo2; if (!sp || sp.length < 120) return []; const n = sp.length; const valid = new Uint8Array(n); let nv = 0; for (let i = 0; i < n; i++) if (sp[i] > 50 && sp[i] <= 100) { valid[i] = 1; nv++; } if (nv < 120) return [];
     const base = new Float32Array(n).fill(NaN); for (let i = 0; i < n; i++) { const w = []; for (let k = Math.max(0, i - 120); k <= i; k++) if (valid[k]) w.push(sp[k]); if (w.length) { w.sort((a, b) => a - b); base[i] = w.length % 2 ? w[w.length >> 1] : (w[w.length / 2 - 1] + w[w.length / 2]) / 2; } }
@@ -270,6 +302,7 @@ const SS = (() => {
       const oa = mean(nomask, 'ODI'), ob = mean(treated, 'ODI');
       if (Number.isFinite(oa) && Number.isFinite(ob)) { if (oa >= Math.max(5, 2 * ob)) p('Without the mask the oxygen dips come back. That is what the therapy is preventing, and why a night off it matters.'); else if (oa < 5) p('Even without the mask the ring found few oxygen dips on these nights. One or two nights do not make a pattern; the machine AHI on treated nights remains the reference.'); }
       else if (!nomask.some(n => Number.isFinite(n.stats.spo2_mean))) p('No ring data on these nights. Wear the ring even when the mask cannot be worn; those nights show what untreated sleep does to your oxygen.'); }
+    { const nh = notesSynopsis(NOTES, nights, start, end); if (nh) H_.push(nh); }
     h2('What this means for you'); const items = [`Treated hours are ${ahi < 5 ? 'well' : 'not fully'} controlled (AHI ${ahi.toFixed(1)}).`];
     if (comp < 70 || totH / sel.length < 6) items.push('The biggest gain available is more hours per night with the mask on.'); if (leakNights.length) items.push('Fix the seal on the nights leak climbed; that is lost therapy.'); if (fl95 >= 0.15) items.push('Flow limitation is the number to watch if you feel unrefreshed despite a low AHI.'); if (!hasOx) items.push('Add oximetry to see the oxygen side; it is half the picture and currently missing.'); if (rns.length > 1) items.push('Hold one setting for at least a week before judging it; single nights swing too much to compare settings on.');
     H_.push('<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>');
@@ -427,6 +460,6 @@ const SS = (() => {
     }
     return out;
   }
-  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw, pressureProfile, pressureProfileText, pressureReading, reraAtCeiling, noMaskRingNights, setReraThr: (v) => { RERA_THR = v; } };
+  return { readEdf, parseAnnotations, buildSessions, scoreSession, nightStats, synopsis, importOximeterCsv, validation, label, fmtTime, pct, readStr, settingsSummary, settingsText, pressureLabel, oximetryReport, setStr, desatEvents, summaryNights, importO2RingRaw, pressureProfile, pressureProfileText, pressureReading, reraAtCeiling, noMaskRingNights, setNotes, getNotes, notesMerge, notesLive, notesForRange, notesForNight, notesContext, setReraThr: (v) => { RERA_THR = v; } };
 })();
 if (typeof module !== 'undefined') module.exports = SS;

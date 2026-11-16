@@ -53,7 +53,11 @@ const EX = (() => {
     { const [fp, ip] = SS.pressureReading(nights); if (fp.length) out.push(B('Time at pressure, events per hour at each pressure', "Top: hours spent at each half cmH2O of pressure across the nights shown, from the machine's pressure trace. Bottom: events per hour of time spent at that pressure (red, machine scored) and flow limitation runs ending in a recovery breath (violet).", fp, ip)); }
     return `<div style="font-size:13px;line-height:1.45">${out.join('')}</div>`;
   }
-  function night(n) {
+  function night(n) { // the user's own notes for the night first (My notes), then the reading of the panels
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return SS.notesForNight(SS.getNotes(), n.date).map(x => `<p style="margin:0 0 6px;padding:4px 8px;background:#fff7ed;border-left:4px solid #eb6834"><b>Your note${x.change ? ' (change from this night on)' : ''}:</b> ${esc(x.text)}</p>`).join('') + nightBody(n);
+  }
+  function nightBody(n) {
     if (n.noMask) { const s = n.stats, fn = Number.isFinite, f = [], im = [], out = [];
       if (fn(s.spo2_mean)) { f.push(`Ring for ${s.ring_hours.toFixed(1)} h: mean SpO2 ${s.spo2_mean.toFixed(1)}%, lowest ${s.spo2_min.toFixed(0)}%, ${s.spo2_pct_lt90.toFixed(1)}% of the time under 90%, ODI ${s.ODI.toFixed(1)} oxygen dips per hour, pulse ${s.pulse_mean.toFixed(0)} bpm.`);
         if (s.ODI >= 15 || s.spo2_pct_lt90 > 5) im.push('Untreated, the oxygen dips are frequent. This is what the mask is preventing; a night without it is not free.'); else if (s.ODI >= 5) im.push('A mild number of oxygen dips without the mask. Compare with your treated nights in the Synopsis.'); else im.push('Few oxygen dips even without the mask this night. One night is not a pattern; the treated nights remain the reference.'); }

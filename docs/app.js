@@ -21,7 +21,7 @@ const idb = { db: null,
 async function filesFromInputs(list) {
   const files = {};
   for (const f of list) {
-    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || name.includes('__MACOSX')) continue; if (/\.edf$/i.test(name)) files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); else if (/(^|\/)\d{14}$/.test(name)) files['companion/raw/' + name.split('/').pop()] = await entry.async('arraybuffer'); else if (/(^|\/)health\.json$/i.test(name)) files['companion/health.json'] = await entry.async('string'); else if (/^about\.txt$/i.test(name)) files['companion/about.txt'] = await entry.async('string'); else if (/\.(csv|txt)$/i.test(name)) { const t = await entry.async('string'); if (isCompanion(t)) files['companion/' + name.split('/').pop()] = t; } } }
+    if (/\.zip$/i.test(f.name)) { const z = await JSZip.loadAsync(await f.arrayBuffer()); for (const [name, entry] of Object.entries(z.files)) { if (entry.dir || name.includes('__MACOSX')) continue; if (/\.edf$/i.test(name)) files[name.replace(/\\/g, '/')] = await entry.async('arraybuffer'); else if (/(^|\/)\d{14}$/.test(name)) files['companion/raw/' + name.split('/').pop()] = await entry.async('arraybuffer'); else if (/(^|\/)health\.json$/i.test(name)) files['companion/health.json'] = await entry.async('string'); else if (/^about\.txt$/i.test(name)) files['companion/about.txt'] = await entry.async('string'); else if (/(^|\/)notes\.json$/i.test(name)) files['companion/notes.json'] = await entry.async('string'); else if (/\.(csv|txt)$/i.test(name)) { const t = await entry.async('string'); if (isCompanion(t)) files['companion/' + name.split('/').pop()] = t; } } }
     else if (/\.edf$/i.test(f.name)) files[(f.webkitRelativePath || f.name).replace(/\\/g, '/')] = await f.arrayBuffer();
     else if (/\.(csv|txt)$/i.test(f.name)) { const t = await f.text(); if (isCompanion(t)) files['companion/' + f.name] = t; }
     else if (/^\d{14}$/.test(f.name)) files['companion/raw/' + f.name] = await f.arrayBuffer();
@@ -33,6 +33,7 @@ function isCompanion(t) { const h = (t.slice(0, 200).split(/\r?\n/)[0] || '').to
 function applyCompanions(files) {
   let oxFiles = 0, oxSessions = 0, health = null; const unmatched = [];
   for (const [k, t] of Object.entries(files)) { if (k.startsWith('companion/raw/') && t instanceof ArrayBuffer) { const n = SS.importO2RingRaw(t, k.split('/').pop(), nights, unmatched); if (n) { oxFiles++; oxSessions += n; } continue; } if (!k.startsWith('companion/') || typeof t !== 'string') continue; if (k === 'companion/about.txt') { const t2 = t.trim(), cur = $('about').value.trim(); if (t2 && t2 !== cur && (!cur || cur === store.get('aboutSynced', ''))) { $('about').value = t2; store.set('about', t2); store.set('aboutSynced', t2); } continue; }
+      if (k === 'companion/notes.json') { try { const j = JSON.parse(t); notesSave(SS.notesMerge(SS.getNotes(), Array.isArray(j) ? j : j.notes)); } catch (e) {} continue; }
       if (k === 'companion/health.json') { try { const d = AH.fromSync(JSON.parse(t)); if (d.sleep.length || d.bd.length) health = d; } catch (e) {} continue; } const h = t.slice(0, 200).toLowerCase(); if (h.includes('oxygen') || h.includes('spo2')) { const n = SS.importOximeterCsv(t, nights, unmatched); if (n) { oxFiles++; oxSessions += n; } } else { const d = AH.readShortcutCsv(t); if (d.sleep.length || d.hr.length) health = d; } }
   if (health) appleData = health;
   // nights the mask could not be worn: ring recordings with no CPAP session become nights of their own
@@ -72,7 +73,7 @@ function afterLoad() {
   $('startsum').textContent = `Loaded: ${nights.length} nights, ${hrs.toFixed(1)} hours, machine AHI ${(ev / hrs).toFixed(1)}.` + (nNoMask ? ` ${nNoMask} night${nNoMask > 1 ? 's' : ''} without the mask (ring or Watch only).` : '');
   $('d0').value = last.date; $('d1').value = last.date;
   if (appleData) { const n = AH.attach(appleData, nights); if (n) { $('st6').textContent = '✔ Watch data present'; $('st6').className = 'status ok'; } }
-  renderSynopsis(); fillNightTable(); if ($('p-nights').classList.contains('active')) drawOverview();
+  renderNotes(); renderSynopsis(); fillNightTable(); if ($('p-nights').classList.contains('active')) drawOverview();
   if (autoOpenSynopsis) { autoOpenSynopsis = false; go('syn'); }
 }
 // One button takes everything: the card zip, ring CSVs, the Health file, in any combination. A pick with no card files
@@ -108,6 +109,31 @@ $('applein').onchange = async (e) => {
   e.target.value = '';
 };
 $('oxin').onchange = async (e) => { const list = [...e.target.files]; if (!list.length || !nights.length) return; try { await addFiles(list, list.map(f => f.name).join(', ')); } catch (err) { $('loadmsg').textContent = 'Could not read that: ' + err; } e.target.value = ''; };
+
+// ---------------------------------------------------------------- my notes (port of notes.py / MyNotesView)
+function notesSave(l) { SS.setNotes(l); store.set('notes', l); }
+SS.setNotes(store.get('notes', []));
+let noteEdit = null;
+function renderNotes() {
+  const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;'); const l = SS.notesLive(SS.getNotes()).slice().reverse();
+  $('notelist').innerHTML = l.length ? l.map(n => `<div class="evt" data-id="${n.id}" style="cursor:pointer${n.id === noteEdit ? ';background:#fde3cc' : ''}"><span class="t">${SS.label(n.date)}</span>${n.change ? '<span class="pill" style="background:#eb6834">change</span>' : ''}<span class="l">${esc(n.text)}</span></div>`).join('') : '<p class="muted">No notes yet.</p>';
+  if (!$('notedate').value) $('notedate').value = nights.length ? nights[nights.length - 1].date : new Date().toISOString().slice(0, 10);
+}
+function notesChanged() { renderNotes(); if (!nights.length) return; renderSynopsis(); refreshAskContext(); if (selectedNight && $('ntexplain')) $('ntexplain').innerHTML = EX.night(selectedNight); }
+function noteClear() { noteEdit = null; $('notetext').value = ''; $('notechange').checked = false; renderNotes(); }
+$('notelist').onclick = (e) => { const d = e.target.closest('[data-id]'); if (!d) return; const n = SS.getNotes().find(x => x.id === d.dataset.id); if (!n) return; noteEdit = n.id; $('notedate').value = n.date; $('notechange').checked = !!n.change; $('notetext').value = n.text; renderNotes(); $('notetext').focus(); };
+$('notenew').onclick = noteClear;
+$('notesave').onclick = () => { const t = $('notetext').value.trim(), d = $('notedate').value; if (!t || !d) { $('notemsg').textContent = 'Pick the night and write something first.'; return; }
+  const l = SS.getNotes().map(n => ({ ...n })); const ex = noteEdit && l.find(n => n.id === noteEdit);
+  if (ex) Object.assign(ex, { date: d, text: t, change: $('notechange').checked, updated: Date.now(), deleted: false });
+  else { const n = { id: Math.random().toString(16).slice(2, 14), date: d, text: t, change: $('notechange').checked, updated: Date.now(), deleted: false }; l.push(n); noteEdit = n.id; }
+  notesSave(SS.notesMerge(l)); $('notemsg').textContent = 'Saved. The synopsis and Claude use it now.'; notesChanged(); };
+$('notedel').onclick = () => { if (!noteEdit) return; notesSave(SS.getNotes().map(n => (n.id === noteEdit ? { ...n, deleted: true, updated: Date.now() } : n))); noteClear(); notesChanged(); };
+$('noteshare').onclick = async () => { const blob = new Blob([JSON.stringify({ notes: SS.getNotes() }, null, 1)], { type: 'application/json' }); const f = new File([blob], 'Sleep notes.json', { type: 'application/json' });
+  try { if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); return; } } catch (e) { return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Sleep notes.json'; a.click(); };
+function noteForNight(d) { noteClear(); $('notedate').value = d; go('syn'); setTimeout(() => { $('notescard').scrollIntoView({ behavior: 'smooth' }); $('notetext').focus(); }, 300); }
+renderNotes();
 
 // ---------------------------------------------------------------- synopsis
 function quick(days) { if (!nights.length) return; const last = nights[nights.length - 1].date; $('d1').value = last; $('d0').value = days ? (nights.find(n => n.date >= addDays(last, -(days - 1))) || nights[0]).date : nights[0].date; renderSynopsis(); }
@@ -171,7 +197,7 @@ function fillNightTable() {
 function showNight(i) {
   const n = nights[i]; const s = n.stats; selectedNight = n; $('landmode').value = 'night'; document.querySelectorAll('#nighttbl tbody tr').forEach((tr, k) => tr.classList.toggle('sel', k === i));
   const box = $('nightdetail'); box.innerHTML = `<div class="card"><h3 style="margin:0 0 6px">${new Date(n.date + 'T12:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3>
-    <div class="row" style="gap:6px"><button style="--c:#6250d6;padding:4px 10px;font-size:12px" onclick="go('land')">View in 3D</button>${n.noMask ? `<span class="pill" style="background:${C.red}">no mask</span>` : `<span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span>`}${isNum(s.AHI) ? `<span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span>` : ''}${n.noMask ? '' : `<span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>`}${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}${Number.isFinite(s.w_asleep) ? `<span class="pill" style="background:#eda100">Watch asleep ${s.w_asleep.toFixed(1)} h${Number.isFinite(s.w_cover) ? ' · mask on ' + s.w_cover.toFixed(0) + '%' : ''}</span>` : ''}${Number.isFinite(s.w_bd) ? `<span class="pill" style="background:#eda100">Watch BD ${s.w_bd.toFixed(1)}</span>` : ''}</div>
+    <div class="row" style="gap:6px"><button style="--c:#6250d6;padding:4px 10px;font-size:12px" onclick="go('land')">View in 3D</button><button style="--c:#eb6834;padding:4px 10px;font-size:12px" onclick="noteForNight('${n.date}')">Add a note</button>${n.noMask ? `<span class="pill" style="background:${C.red}">no mask</span>` : `<span class="pill" style="background:${C.blue}">${n.hours.toFixed(1)} h</span>`}${isNum(s.AHI) ? `<span class="pill" style="background:${s.AHI < 5 ? C.green : C.red}">AHI ${s.AHI.toFixed(1)}</span>` : ''}${n.noMask ? '' : `<span class="pill" style="background:${C.violet}">${s.mode} ${Number.isFinite(s.press_min) ? Math.round(s.press_min) + ' to ' + Math.round(s.press_max) : ''}</span><span class="pill" style="background:${s.leak_95 > 24 ? C.red : C.grey}">leak 95th ${Number.isFinite(s.leak_95) ? s.leak_95.toFixed(0) : '?'}</span><span class="pill" style="background:${C.amber}">FL 95th ${Number.isFinite(s.flowlim_95) ? s.flowlim_95.toFixed(2) : '?'}</span>`}${Number.isFinite(s.spo2_mean) ? `<span class="pill" style="background:${C.red}">SpO2 min ${s.spo2_min.toFixed(0)} · ODI ${s.ODI.toFixed(1)}</span>` : ''}${Number.isFinite(s.w_asleep) ? `<span class="pill" style="background:#eda100">Watch asleep ${s.w_asleep.toFixed(1)} h${Number.isFinite(s.w_cover) ? ' · mask on ' + s.w_cover.toFixed(0) + '%' : ''}</span>` : ''}${Number.isFinite(s.w_bd) ? `<span class="pill" style="background:#eda100">Watch BD ${s.w_bd.toFixed(1)}</span>` : ''}</div>
     ${n.noMask ? '' : `<div class="hl">SETTINGS &nbsp; ${SS.settingsText(SS.settingsSummary([n], strData))}</div><p class="muted" style="margin:8px 0 0">Sessions: ${n.sessions.map(x => { const pr = x.ch.Press; if (!pr || !pr.length) return SS.fmtTime(x.start); const skip = Math.max(Math.floor(pr.length * 0.15), Math.min(900, pr.length >> 1)); const t = pr.subarray(skip); let m = 0; for (const v of t) m += v; m /= t.length || 1; let sd = 0; for (const v of t) sd += (v - m) ** 2; sd = Math.sqrt(sd / (t.length || 1)); let lo = Infinity, hi = -Infinity; for (const v of pr) { if (v < lo) lo = v; if (v > hi) hi = v; } return `${SS.fmtTime(x.start)} (${sd < 0.05 ? 'CPAP ' + hi.toFixed(0) : lo.toFixed(0) + ' to ' + hi.toFixed(0)})`; }).join(', ')}. OA ${s.OA}, CA ${s.CA}, H ${s.H}, arousals ${s.arousals}. RR ${s.rr_med.toFixed(0)}, Vt ${s.tv_med.toFixed(0)} mL, MV ${s.mv_med.toFixed(1)}.</p>`}</div>
     <div class="card"><div id="ch-night" style="width:100%;height:${520 + (Number.isFinite(s.spo2_mean) ? 100 : 0) + (n.apple && n.apple.stages.length ? 200 : 0)}px"></div><div class="key"><span><i style="background:${C.red}"></i>obstructive</span><span><i style="background:${C.violet}"></i>central</span><span><i style="background:${C.orange}"></i>hypopnea</span><span><i style="background:${C.amber}"></i>arousal</span><span>lighter bands = app events</span></div></div>
     <div class="card"><details><summary>What these panels mean, what stands out tonight, what to improve</summary><div id="ntexplain"></div></details></div>
@@ -313,7 +339,7 @@ function cams(N) { const c = { x: 0, y: 0, z: 0 }; return { over: { eye: { x: -0
 function landView(v) { landCam = v; drawLandscape(); }
 
 // ---------------------------------------------------------------- Claude
-const SYSTEM = `You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data. Give plain, direct, well-reasoned answers with no filler. Spell out every abbreviation the first time you use it, for example AHI (apnea hypopnea index). Use the numbers in the CONTEXT block; do not invent data. Say when something is not in the data and what would answer it. Pressure settings are prescribed: discuss trade-offs and what to raise with the prescriber rather than instructing changes. Never use dashes in prose. Keep answers tight.`;
+const SYSTEM = `You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data. Give plain, direct, well-reasoned answers with no filler. Spell out every abbreviation the first time you use it, for example AHI (apnea hypopnea index). Use the numbers in the CONTEXT block; do not invent data. Read the My notes section: the user's own account of each night (a mask change, congestion, alcohol, a late night, a night without the mask) explains numbers the data alone cannot; tie your reading to those notes and judge any change they marked by the nights before and after it. Say when something is not in the data and what would answer it. Pressure settings are prescribed: discuss trade-offs and what to raise with the prescriber rather than instructing changes. Never use dashes in prose. Keep answers tight.`;
 function buildContext(a, b) {
   const sel = nights.filter(n => n.date >= a && n.date <= b); const diag = parseFloat($('diag').value) || null;
   const syn = (SS.synopsis(nights, a, b, diag) + appleSection(a, b)).replace(/<\/(p|h3|h4|li|div)>/g, '\n').replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); const cols = ['date', 'hours', 'mode', 'AHI', 'OA', 'CA', 'H', 'arousals', 'app_AHI', 'app_unflagged', 'press_min', 'press_med', 'press_95', 'press_max', 'press_at_max_pct', 'leak_med', 'leak_95', 'leak_pct_large', 'flowlim_95', 'flowlim_minutes', 'rr_med', 'tv_med', 'mv_med', 'spo2_mean', 'spo2_min', 'spo2_pct_lt90', 'ODI', 'w_bd', 'w_asleep', 'w_cover', 'w_deeprem', 'w_hrv'];
@@ -329,7 +355,8 @@ function buildContext(a, b) {
   const ox = []; for (const n of sel) { const r = SS.oximetryReport(n); if (r.length) { ox.push(`${SS.label(n.date)}:`); ox.push(...r); } }
   const oxtxt = ox.length ? `\n\n=== Oximeter timeline (ring SpO2 and pulse matched to events and leak by clock time) ===\n${ox.join('\n')}` : '';
   const [tot, hit] = SS.validation(sel);
-  return `CONTEXT\nDate range ${a} to ${b}. Nights with data: ${sel.length}.\n\n=== Rule based synopsis ===\n${syn}\n\n=== Per night statistics (tab separated; P cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed) ===\n${table}${ptab ? `\n\n=== Time at pressure (from the 2 s pressure trace; events counted at onset; rate = events per hour spent at that pressure) ===\n${ptab}` : ''}\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n${evs.join('\n')}${oxtxt}\n\n=== Method notes ===\nResMed stamps event end; app subtracts duration. App hypopnea = 30% flow drop >= 10 s without desaturation check (over-counts). On this data the app reproduced ${hit} of ${tot} machine apneas. Obstructive vs central comes only from the machine. When an oximeter timeline section is present, use it to say which events cost oxygen and which dips look like sensor artifact.`;
+  const nt = SS.notesContext(SS.getNotes(), nights, a, b);
+  return `CONTEXT\nDate range ${a} to ${b}. Nights with data: ${sel.length}.\n\n${nt ? `=== My notes (written by the user, night by night; [change] marks a change from that night on) ===\n${nt}\n\n` : ''}=== Rule based synopsis ===\n${syn}\n\n=== Per night statistics (tab separated; P cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed) ===\n${table}${ptab ? `\n\n=== Time at pressure (from the 2 s pressure trace; events counted at onset; rate = events per hour spent at that pressure) ===\n${ptab}` : ''}\n\n=== Events (flow limitation runs listed only when RERA-like) ===\n${evs.join('\n')}${oxtxt}\n\n=== Method notes ===\nResMed stamps event end; app subtracts duration. App hypopnea = 30% flow drop >= 10 s without desaturation check (over-counts). On this data the app reproduced ${hit} of ${tot} machine apneas. Obstructive vs central comes only from the machine. When an oximeter timeline section is present, use it to say which events cost oxygen and which dips look like sensor artifact.`;
 }
 async function callClaude(messages, system) {
   const key = $('apikey').value.trim(); if (!key) throw new Error('No API key saved.');
@@ -344,7 +371,7 @@ async function callClaude(messages, system) {
 const sysWithAbout = () => SYSTEM + ($('about').value.trim() ? `\nAbout the user, in their words: ${$('about').value.trim()}\n` : '');
 async function claudeSynopsis(force) {
   if (!nights.length || !$('apikey').value.trim() || claudeBusy) return; let a = $('d0').value, b = $('d1').value; if (a > b) [a, b] = [b, a];
-  const sel = nights.filter(n => n.date >= a && n.date <= b); const sig = sel.map(n => `${n.date}:${n.hours.toFixed(3)}:${n.stats.AHI.toFixed(3)}:${n.stats.spo2_mean}`).join('|') + '|' + $('diag').value + '|' + $('about').value;
+  const sel = nights.filter(n => n.date >= a && n.date <= b); const sig = sel.map(n => `${n.date}:${n.hours.toFixed(3)}:${n.stats.AHI.toFixed(3)}:${n.stats.spo2_mean}`).join('|') + '|' + $('diag').value + '|' + $('about').value + '|' + JSON.stringify(SS.notesLive(SS.getNotes()));
   const cache = store.get('synCache', {}); if (!force && cache[sig]) { $('claudetext').innerHTML = md(cache[sig]); $('claudestatus').textContent = 'From cache. Press Ask Claude now to refresh.'; return; }
   claudeBusy = true; $('claudestatus').textContent = 'Asking Claude… (30 to 60 s)'; $('claudesyn').disabled = true;
   try {
@@ -384,6 +411,8 @@ function refreshAskContext() {
   if (lk.length) out.push(`Leak 95th percentile ${med(lk).toFixed(1)} L/min (median night).`);
   out.push(`Ring oxygen on ${ring} night${ring !== 1 ? 's' : ''}, Watch sleep on ${watch}.`);
   out.push(about ? `About me: ${about.replace(/\.$/, '')}.` : 'About me: empty. Add a line (age, diagnosis AHI, mask, what you want) for better answers.');
+  { const nn = SS.notesForRange(SS.getNotes(), a, b).length, ch = SS.notesLive(SS.getNotes()).filter(n => n.change && n.date <= b).length;
+    out.push(nn || ch ? `My notes: ${nn} in this range${ch ? `, ${ch} change${ch !== 1 ? 's' : ''} compared before and after` : ''}.` : 'My notes: none in this range. Add one on the Synopsis page (a mask change, a cold, a late night) and Claude reads it.'); }
   out.push("Also sent: the synopsis, every night's numbers, the event list and the oxygen timeline.");
   el.innerHTML = '<b>What Claude sees with each question:</b> ' + out.join(' ').replace(/</g, '&lt;');
 }

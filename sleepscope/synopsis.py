@@ -228,6 +228,11 @@ def generate(nights, start: dt.date, end: dt.date, diagnostic_ahi: float | None 
               'which measures airflow at the mask. Use it as a trend across weeks, and as the only check on nights the mask comes off; the machine AHI stays the reference.')
         p('Deep and REM minutes, and a falling overnight heart rate and rising HRV over weeks, are the Watch-side evidence that treated sleep is restorative. Compare nights with the mask on all night against split nights.')
 
+    # ---- the user's own notes, and before and after for each change they marked
+    from . import notes as _notes
+    nh = _notes.synopsis_html(_notes.CURRENT, nights, start, end)
+    if nh: H_.append(nh)
+
     # ---- bottom line
     h2('What this means for you')
     items = []

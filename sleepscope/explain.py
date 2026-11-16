@@ -182,6 +182,14 @@ def overview_items(nights):
     items = []; overview(nights, items); return items
 
 def night(nt) -> str:
+    """The user's own notes for the night first (My notes tab), then the reading of the panels."""
+    from . import notes as _nm
+    mine = _nm.for_night(_nm.CURRENT, nt.date)
+    head = ''.join(f"<p style='margin:0 0 6px;padding:4px 8px;background:#fff7ed;border-left:4px solid #eb6834'><b>Your note{' (change from this night on)' if n.get('change') else ''}:</b> {_nm._esc(n['text'])}</p>" for n in mine)
+    return head + _night_body(nt)
+
+
+def _night_body(nt) -> str:
     if getattr(nt, 'no_mask', False):
         st = nt.stats; g = lambda k: st.get(k, float('nan')); out = []
         found, imp = [], []

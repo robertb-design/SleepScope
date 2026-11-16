@@ -9,7 +9,7 @@ from __future__ import annotations
 import json, datetime as dt, urllib.request, urllib.error, html, re, os, glob
 import numpy as np
 from PySide6 import QtCore, QtWidgets, QtGui
-from . import scoring, synopsis
+from . import scoring, synopsis, notes as notes_mod
 
 API_URL = 'https://api.anthropic.com/v1/messages'
 DEFAULT_MODEL = 'claude-sonnet-5-5'
@@ -17,7 +17,7 @@ C_ERR = '#e34948'
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
 
 SYSTEM = """You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data.
-Give plain, direct, well-reasoned answers with no filler. Spell out every abbreviation the first time you use it, for example AHI (apnea hypopnea index). If the user has written an About me note, use it to pitch the answer.
+Give plain, direct, well-reasoned answers with no filler. Spell out every abbreviation the first time you use it, for example AHI (apnea hypopnea index). If the user has written an About me note, use it to pitch the answer. Read the My notes section: the user's own account of each night (a mask change, congestion, alcohol, a late night, a night without the mask) explains numbers the data alone cannot; tie your reading to those notes and judge any change they marked by the nights before and after it.
 You have the app's computed results for the selected date range in the CONTEXT block. Use those numbers; do not invent data.
 When a question needs something not in the context, say so and name what would answer it (an oximeter, STR.edf, a longer range, the prescriber).
 Be clear about what is established physiology versus your inference. Pressure settings are prescribed: discuss trade-offs and what to raise
@@ -31,7 +31,7 @@ EVENT_BUDGET = 700
 def build_context(nights, start, end, diag_ahi=None):
     sel = [n for n in nights if start <= n.date <= end]
     if not sel: return 'No nights in range.'
-    syn = re.sub(r'<[^>]+>', '', synopsis.generate(sel, start, end, diag_ahi))
+    syn = re.sub(r'<[^>]+>', '', synopsis.generate(nights, start, end, diag_ahi))
     syn = html.unescape(re.sub(r'\n{3,}', '\n\n', syn))
     cols = [(k, h) for k, h, _ in scoring.STAT_COLUMNS]
     table = ['\t'.join(h for _, h in cols)]
@@ -61,7 +61,10 @@ def build_context(nights, start, end, diag_ahi=None):
         if rep: ox.append(f"{n.label}:"); ox += rep
     oxtxt = ('\n\n=== Oximeter timeline (ring SpO2 and pulse matched to events and leak by clock time) ===\n' + '\n'.join(ox)) if ox else ''
     total, hit = scoring.validation_summary(sel)
-    return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n=== App synopsis (rule based) ===\n{syn}\n\n"
+    nt = notes_mod.context_text(notes_mod.CURRENT, nights, start, end)
+    return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n"
+            + (f"=== My notes (written by the user, night by night; [change] marks a change from that night on) ===\n{nt}\n\n" if nt else '')
+            + f"=== App synopsis (rule based) ===\n{syn}\n\n"
             f"=== Per night statistics (tab separated; P = set pressure cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed scoring) ===\n"
             + '\n'.join(table)
             + ("\n\n=== Time at pressure (from the 2 s pressure trace; events counted at onset; rate = events per hour spent at that pressure) ===\n" + ptxt_tab if ptxt_tab else '')
@@ -100,6 +103,8 @@ def context_summary(nights, start, end, about=''):
     if lk: out.append(f"Leak 95th percentile {np.median(lk):.1f} L/min (median night).")
     out.append(f"Ring oxygen on {ring} night{'s' if ring != 1 else ''}, Watch sleep on {watch}.")
     out.append(f"About me: {about.rstrip('.')}." if about else 'About me: empty. Add a line (age, diagnosis AHI, mask, what you want) for better answers.')
+    nn = len(notes_mod.for_range(notes_mod.CURRENT, start, end)); ch = sum(1 for n in notes_mod.live(notes_mod.CURRENT) if n.get('change') and n['date'] <= str(end))
+    out.append(f"My notes: {nn} in this range" + (f", {ch} change{'s' if ch != 1 else ''} compared before and after" if ch else '') + '.' if nn or ch else 'My notes: none in this range. Add one in the My notes tab (a mask change, a cold, a late night) and Claude reads it.')
     out.append('Also sent: the synopsis, every night\'s numbers, the event list and the oxygen timeline.')
     return ' '.join(out)
 
