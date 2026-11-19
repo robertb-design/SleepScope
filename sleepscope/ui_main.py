@@ -852,14 +852,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _phone_sync(self):
         folder = self.phone_folder()
         if not folder or not self.data or not self.data.get('datalog') or not os.path.isdir(self.data['datalog']): return
-        if os.path.abspath(self.data['root']).startswith(os.path.abspath(folder)): return      # loading from the phone copy itself
-        if getattr(self, 'sync_worker', None) is not None and self.sync_worker.isRunning(): return
+        # skip only when reading an unpacked phone copy inside the folder; Card history also lives there and must still be sent
+        if not self.data.get('history') and os.path.abspath(self.data['root']).startswith(os.path.abspath(folder)): return
+        if getattr(self, 'sync_worker', None) is not None and self.sync_worker.isRunning():
+            self._sync_again = True; return                           # e.g. Watch data arrived while the first copy was being written
+        self._sync_again = False
         try:
             import time as _t
             ring = [p_ for p_ in (getattr(self, 'ring_files', None) or loader.find_companion_files(self.companion_folders(self.data.get('root')))[0]) if _t.time() - os.path.getmtime(p_) < 60 * 86400]
         except Exception: ring = []
         self.sync_worker = PhoneSyncWorker(self.data['root'], self.data['datalog'], folder, self.nights, ring, getattr(self, 'apple_data', None))
-        self.sync_worker.done.connect(lambda msg: self.statusBar().showMessage(msg, 15000)); self.sync_worker.start()
+        self.sync_worker.done.connect(self._phone_sync_done); self.sync_worker.start()
+    def _phone_sync_done(self, msg):
+        self.statusBar().showMessage(msg, 15000)
+        if getattr(self, '_sync_again', False): QtCore.QTimer.singleShot(500, self._phone_sync)
     def set_phone_folder(self):
         cur = self.phone_folder() or os.path.expanduser('~')
         box = QtWidgets.QMessageBox(self); box.setWindowTitle('Phone copy')
