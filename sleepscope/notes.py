@@ -111,11 +111,13 @@ def synopsis_html(notes, nights, start, end):
 
 
 def context_text(notes, nights, start, end):
-    """Plain text for Claude: every note in range, every change before it, and the before and after numbers."""
-    inr = for_range(notes, start, end); a = _d(start)
-    earlier = [n for n in live(notes) if n.get('change') and _d(n['date']) < a]
-    if not inr and not earlier: return ''
-    lines = [f"{label(n['date'])}{' [change]' if n.get('change') else ''}: {' '.join(n['text'].split())}" for n in earlier + inr]
+    """Plain text for Claude: every note the user has written (those outside the range are marked, since a cold or a mask
+    change before the range can still explain it), then the before and after numbers for each change. Never empty."""
+    a, b = _d(start), _d(end)
+    alln = sorted(live(notes), key=lambda n: n['date'])
+    if not alln: return 'None written yet.'
+    lines = [f"{label(n['date'])}{' [change]' if n.get('change') else ''}{'' if a <= _d(n['date']) <= b else ' (outside the selected range)'}: {' '.join(n['text'].split())}"
+             for n in alln]
     for c in compare(notes, nights, end):
         if c['before'] and c['after'] and c['rows']:
             lines.append(f"Before and after {label(c['note']['date'])} ({c['before']} nights before, {c['after']} after): "

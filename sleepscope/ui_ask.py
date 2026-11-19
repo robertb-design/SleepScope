@@ -17,7 +17,7 @@ C_ERR = '#e34948'
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
 
 SYSTEM = """You are a sleep-therapy data analyst helping a CPAP user understand their own ResMed AirSense data.
-Give plain, direct, well-reasoned answers with no filler. Spell out every abbreviation the first time you use it, for example AHI (apnea hypopnea index). If the user has written an About me note, use it to pitch the answer. Read the My notes section: the user's own account of each night (a mask change, congestion, alcohol, a late night, a night without the mask) explains numbers the data alone cannot; tie your reading to those notes and judge any change they marked by the nights before and after it.
+Give plain, direct, well-reasoned answers with no filler. Spell out every abbreviation the first time you use it, for example AHI (apnea hypopnea index). If the user has written an About me note, use it to pitch the answer. Always start from the My notes section before you analyze anything: it is the user's own account of their nights (a mask change, a cold or congestion, alcohol, a late night, a night without the mask) and explains numbers the data alone cannot. In every answer that analyzes nights, say which notes bear on it: name the note beside any night you discuss that has one, use notes outside the selected range when they explain it, judge any change the user marked by the nights before and after it, and when an unusual night has no note, say that no note explains it. If My notes says none are written, say so in one line and suggest adding one.
 You have the app's computed results for the selected date range in the CONTEXT block. Use those numbers; do not invent data.
 When a question needs something not in the context, say so and name what would answer it (an oximeter, STR.edf, a longer range, the prescriber).
 Be clear about what is established physiology versus your inference. Pressure settings are prescribed: discuss trade-offs and what to raise
@@ -63,7 +63,7 @@ def build_context(nights, start, end, diag_ahi=None):
     total, hit = scoring.validation_summary(sel)
     nt = notes_mod.context_text(notes_mod.CURRENT, nights, start, end)
     return (f"CONTEXT\nDate range: {start} to {end}. Nights with data: {len(sel)}.\n\n"
-            + (f"=== My notes (written by the user, night by night; [change] marks a change from that night on) ===\n{nt}\n\n" if nt else '')
+            + f"=== My notes (written by the user, night by night; [change] marks a change from that night on) ===\n{nt}\n\n"
             + f"=== App synopsis (rule based) ===\n{syn}\n\n"
             f"=== Per night statistics (tab separated; P = set pressure cmH2O, leak L/min, app = SleepScope's own flow scoring, machine = ResMed scoring) ===\n"
             + '\n'.join(table)

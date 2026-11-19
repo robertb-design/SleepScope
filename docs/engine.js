@@ -130,8 +130,9 @@ const SS = (() => {
     return H.join('\n');
   }
   function notesContext(l, nights, start, end) {
-    const inr = notesForRange(l, start, end), earlier = notesLive(l).filter(n => n.change && n.date < start); if (!inr.length && !earlier.length) return '';
-    const lines = [...earlier, ...inr].map(n => `${label(n.date)}${n.change ? ' [change]' : ''}: ${n.text.split(/\s+/).join(' ')}`);
+    // every note the user has written; those outside the range are marked (a cold or a mask change before it can still explain it). Never empty.
+    const all = notesLive(l).slice().sort((x, y) => x.date < y.date ? -1 : x.date > y.date ? 1 : 0); if (!all.length) return 'None written yet.';
+    const lines = all.map(n => `${label(n.date)}${n.change ? ' [change]' : ''}${n.date >= start && n.date <= end ? '' : ' (outside the selected range)'}: ${n.text.split(/\s+/).join(' ')}`);
     for (const c of notesCompare(l, nights, end)) if (c.before && c.after && c.rows.length) lines.push(`Before and after ${label(c.note.date)} (${c.before} nights before, ${c.after} after): ` + c.rows.map(([nm, a, b]) => `${nm} ${a} then ${b}`).join('; '));
     return lines.join('\n');
   }

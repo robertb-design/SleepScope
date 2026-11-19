@@ -123,8 +123,10 @@ Phone (`docs/`): `engine.js` (port of loader + scoring + synopsis), `explain.js`
   Sleepscope folder; every `Sleep notes*.json` there is merged on load (newest edit per id wins, deletes are tombstones), so a
   file the phone shares with Send to PC comes back in. Packed as `notes.json` in the card zip; phone keeps them in
   localStorage `ss_notes`. Used by: the Synopsis "Your notes" section (a change note compares up to 14 treated nights before
-  with up to 14 from that night on: hours, AHI, leak 95th, ODI, SpO2, Watch BD), Claude's context ("=== My notes ===" plus the
-  before and after lines; the system prompt tells Claude to use them), the "What Claude sees" summary, and the top of each Night explanation.
+  with up to 14 from that night on: hours, AHI, leak 95th, ODI, SpO2, Watch BD), Claude's context ("=== My notes ===" is always sent: every note
+  the user has written, those outside the range marked, "None written yet." when there are none, plus the before and after lines;
+  the system prompt tells Claude to start from them, name the note beside any night it discusses and say when no note explains an
+  unusual night), the "What Claude sees" summary, and the top of each Night explanation.
 
 ## Scoring rules that matter
 - AHI (machine) comes from the machine. The app's own recount is shown beside it, never instead of it.
