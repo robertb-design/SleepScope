@@ -19,6 +19,23 @@ from .branding import Page, LogoWidget, app_icon
 SETTINGS = QtCore.QSettings('SleepScope', 'SleepScope')
 
 
+def _os_error_text(e):
+    """A file error in plain words, with the folder it was about."""
+    path = getattr(e, 'filename', '') or ''
+    if isinstance(e, PermissionError): why = 'Windows refused access'
+    elif isinstance(e, FileNotFoundError): why = 'the folder could not be found'
+    elif getattr(e, 'winerror', None) == 362: why = 'Dropbox is not running, so its online-only files could not be read'
+    else: why = str(getattr(e, 'strerror', '') or e)
+    return f'{why}' + (f' ({path})' if path else '')
+
+
+BLOCKED_HELP = ("Usual causes, quickest first:\n"
+                "1. Windows Security, Virus and threat protection, Ransomware protection: if Controlled folder access is on, "
+                "choose Allow an app through and add SleepScope.\n"
+                "2. Dropbox is not running, or the Sleepscope folder is online only. Start Dropbox and set the folder to Make available offline.\n"
+                "3. The folder belongs to someone else or is view only. Click Phone copy on the toolbar and choose your own Sleepscope folder.")
+
+
 class LoadWorker(QtCore.QThread):
     progress = QtCore.Signal(int, int, str)
     done = QtCore.Signal(object)
@@ -27,15 +44,18 @@ class LoadWorker(QtCore.QThread):
         super().__init__(); self.root, self.history, self.extra = root, history, list(extra)
     def run(self):
         try:
-            src = self.root; self.copied = 0
+            src = self.root; self.copied = 0; self.history_error = ''
             if self.history:                                          # keep our own copy of every night, then read from it
-                os.makedirs(self.history, exist_ok=True)
-                for x in self.extra + [self.root]:
+                try: os.makedirs(self.history, exist_ok=True)
+                except OSError as e: self.history_error = _os_error_text(e)
+                for x in ([] if self.history_error else self.extra + [self.root]):
                     try:
                         if str(x).lower().endswith('.zip'): self.progress.emit(0, 1, 'Adding nights from SleepScope card.zip'); self.copied += loader.sync_zip_to_history(x, self.history)
                         else: self.copied += loader.sync_to_history(x, self.history, lambda i, n, m: self.progress.emit(i, n, m))
-                    except Exception: pass
-                if loader.card_parts(self.history)[1] and os.listdir(os.path.join(self.history, 'DATALOG')): src = self.history
+                    except Exception as e:
+                        if x is self.root: self.history_error = _os_error_text(e)   # the card could not be copied: read it directly
+                card_in = bool(loader.card_parts(self.root)[1]) and not os.path.abspath(self.root).startswith(os.path.abspath(self.history))
+                if not (self.history_error and card_in) and loader.card_parts(self.history)[1] and os.listdir(os.path.join(self.history, 'DATALOG')): src = self.history
             data = loader.scan(src, progress=lambda i, n, name: self.progress.emit(i, n, 'Reading ' + name))
             data['card_root'] = self.root; data['history'] = src == self.history
             nights = data['nights']
@@ -93,10 +113,14 @@ class PhoneSyncWorker(QtCore.QThread):
                 if self.health:                                        # Watch nights, trimmed to the card's window, for the phone
                     import json as _json
                     z.writestr('health.json', _json.dumps(apple_health.to_sync(self.health, self.nights[-45].date if len(self.nights) >= 45 else self.nights[0].date)))
-            os.replace(tmp, out)
+            for attempt in range(6):                                   # Dropbox or the phone can hold the old zip open for a moment
+                try: os.replace(tmp, out); break
+                except PermissionError:
+                    if attempt == 5: raise
+                    self.msleep(1000)
             self.done.emit(f'Phone copy updated: {out} ({os.path.getsize(out) / 1e6:.0f} MB, {count} card files' + (f', {rings} ring files' if rings else '') + (', Watch data' if self.health else '') + ')')
         except Exception as e:
-            self.done.emit(f'Phone copy failed: {e}')
+            self.done.emit(f'Phone copy not saved in {self.folder}: ' + (_os_error_text(e) if isinstance(e, OSError) else str(e)) + '. See How to use, Phone copy.')
 
 
 class Table(QtWidgets.QTableWidget):
@@ -544,7 +568,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def load(self, root):
         if getattr(self, 'worker', None) is not None and self.worker.isRunning():
             return
-        if root and not os.path.isdir(root): os.makedirs(root, exist_ok=True) if root == self.history_folder() else None
+        if root and not os.path.isdir(root) and root == self.history_folder():
+            try: os.makedirs(root, exist_ok=True)
+            except OSError as e:
+                self.statusBar().showMessage(f'Could not create {root}: {_os_error_text(e)}'); return
         hist0 = self.history_folder()
         if root and loader.card_parts(root)[1] and not (hist0 and os.path.abspath(root).startswith(os.path.abspath(hist0))): SETTINGS.setValue('root', root)
         self.progress.setVisible(True); self.progress.setValue(0)
@@ -564,6 +591,13 @@ class MainWindow(QtWidgets.QMainWindow):
         src = "SleepScope's own copy (Card history)" if data.get('history') else data['datalog']
         card_in = bool(loader.card_parts(data.get('card_root'))[1]) and not str(data.get('card_root', '')).startswith(str(self.history_folder() or '~~'))
         self.statusBar().showMessage(f"{len(self.nights)} nights loaded from {src}" + (f"; {kept} new or updated nights copied from the card" if kept else '') + ('' if card_in else '; card not in the PC, showing everything kept so far'))
+        herr = getattr(self.worker, 'history_error', '') if getattr(self, 'worker', None) else ''
+        if herr and not getattr(self, '_blocked_warned', False):
+            self._blocked_warned = True                               # once a session; the card itself was read, so nothing is missing from this load
+            QtCore.QTimer.singleShot(300, lambda: QtWidgets.QMessageBox.warning(self, 'Could not save to the Sleepscope folder',
+                f"SleepScope read your nights from the card, but could not keep its copy in\n{self.history_folder()}\n\nReason: {herr}\n\n"
+                "Nothing is lost; the nights are still on the card. Until this is fixed, SleepScope cannot keep nights after the card fills up, "
+                "and the phone copy may not update.\n\n" + BLOCKED_HELP))
         self.night_view.str_data = data.get('str') if isinstance(data.get('str'), dict) and 'signals' in data.get('str') else None; self.landscape.str_data = self.night_view.str_data
         scoring.apply_str_settings(self.nights, self.night_view.str_data)
         self._fill_nights()
