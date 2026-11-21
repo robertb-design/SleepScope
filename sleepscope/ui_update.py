@@ -16,7 +16,8 @@ STEPS = [
      'Card in, open <b>SleepScope</b>, click <b>Open SD card</b> and pick the card drive (for example <b>F:</b>). '
      'This also writes <b>SleepScope card.zip</b> to Dropbox for the phone. Then put the card back in the AirSense.'),
     ('Phone', 'Every morning',
-     'Open <b>SleepScope</b>, tap <b>Choose zip or files</b>, then <b>Dropbox \\ Sleepscope \\ SleepScope card.zip</b>.'),
+     'Open <b>SleepScope</b>, tap <b>Choose zip or files</b>, then <b>Dropbox \\ Sleepscope \\ SleepScope card.zip</b>. '
+     'Do the PC step first; the phone only sees what the PC last wrote to the zip.'),
 ]
 TONIGHT = 'Tonight: wear the Watch to bed, ring on, card in the machine.'
 
